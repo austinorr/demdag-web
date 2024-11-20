@@ -77,8 +77,17 @@
     <script type="module" src="./src/index.js"></script>
   </head>
   <body>
-    <div style="display: flex; justify-content: center; width: 100%">
-      <canvas id="canvas"></canvas>
+    <div>
+      <div style="display: flex; justify-content: center; width: 100%">
+        <button onclick="main()">Load Small Example</button>
+        <button onclick="mainLG()">Load Large Example</button>
+        <button onclick="adjustZoom(1)">Zoom In +</button>
+        <button onclick="adjustZoom(-1)">Zoom Out -</button>
+        <button onclick="resetZoom()">Reset Zoom</button>
+      </div>
+      <div style="display: flex; justify-content: center; width: 100%">
+        <canvas id="canvas"></canvas>
+      </div>
     </div>
   </body>
 </html>
