@@ -1,0 +1,17 @@
+# http://editorconfig.org
+
+root = true
+
+[*] # from https://github.com/vitejs/vite/blob/0474550/.editorconfig
+charset = utf-8
+indent_style = space
+indent_size = 2
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.py]
+indent_size = 4
+
+[Makefile]
+indent_style = tab
