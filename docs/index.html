@@ -74,18 +74,29 @@
         }
       }
     </script>
-    <script type="module" crossorigin src="/demdag-web/assets/index-DgpHCLrt.js"></script>
+    <script type="module" crossorigin src="/demdag-web/assets/index-CUn-KXCX.js"></script>
   </head>
   <body>
-    <div>
-      <div style="display: flex; justify-content: center; width: 100%">
+    <div
+      style="
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        width: 100%;
+      "
+    >
+      <div style="text-align: center">
+        Hover over the image (or touch) to see the complete watershed
+        delineation upstream of each pixel.
+      </div>
+      <div style="display: flex; margin: 1rem">
         <button onclick="main()">Load Small Example</button>
         <button onclick="mainLG()">Load Large Example</button>
         <button onclick="adjustZoom(1)">Zoom In +</button>
         <button onclick="adjustZoom(-1)">Zoom Out -</button>
         <button onclick="resetZoom()">Reset Zoom</button>
       </div>
-      <div style="display: flex; justify-content: center; width: 100%">
+      <div>
         <canvas id="canvas"></canvas>
       </div>
     </div>
