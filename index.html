@@ -87,7 +87,7 @@
     >
       <div style="text-align: center">
         Hover over the image (or touch) to see the complete watershed
-        delineation upstream of each pixel.
+        delineation upstream of each pixel.</br>On mobile devices, use two fingers to pan.
       </div>
       <div style="display: flex; margin: 1rem">
         <button onclick="main()">Load Small Example</button>
@@ -96,7 +96,9 @@
         <button onclick="adjustZoom(-1)">Zoom Out -</button>
         <button onclick="resetZoom()">Reset Zoom</button>
       </div>
-      <div>
+    </div>
+    <div style="display: flex; width: 100%">
+      <div style="margin: auto">
         <canvas id="canvas"></canvas>
       </div>
     </div>
