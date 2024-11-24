@@ -501,7 +501,7 @@ document.querySelector("#canvas").addEventListener(
 const onMove = (e) => {
   const pos = getNoPaddingNoBorderCanvasRelativeMousePosition(e);
   mousePos.x = pos.x;
-  mousePos.y = pos.y + (isMobile ? 1 : 0) * -25;
+  mousePos.y = pos.y + (isMobile ? 1 : 0) * -40;
   console.debug("mousePos", mousePos);
   render();
 };
