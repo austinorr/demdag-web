@@ -38,6 +38,7 @@
 
       uniform vec2 u_resolution;
       uniform vec2 u_mouse;
+      uniform float u_zoom;
 
       // our textures
       uniform sampler2D u_image0;
@@ -52,9 +53,16 @@
         return dv;
       }
 
+      float distSquared( vec2 A, vec2 B ) {
+          vec2 C = A - B;
+          return dot( C, C );
+      }
+
       void main() {
 
         vec2 mpos = u_mouse / u_resolution;
+        vec2 ss = vec2(gl_FragCoord.x / u_zoom , (u_resolution.y-gl_FragCoord.y / u_zoom))   ;
+        float mdist = distSquared(u_mouse, ss );
         vec4 dvec = texture2D(u_image0, mpos);
         vec4 fvec = texture2D(u_image1, mpos);
 
@@ -72,9 +80,18 @@
         if (d >= dv && f <= fv) {
           gl_FragColor *= vec4(0.1, 0.5, 0.8, 1.0);
         }
+        if (mdist < 10.0) {
+          if (mdist <= 1.0) {
+            gl_FragColor *= vec4(0.0, 0.8, 0.0, 1.0);
+          } else if (mdist > 7.0) {
+            gl_FragColor *= vec4(0.33, 0.33, 0.33, 1.0);
+          }
+
+
+        }
       }
     </script>
-    <script type="module" crossorigin src="/demdag-web/assets/index-CDstcfPB.js"></script>
+    <script type="module" crossorigin src="/demdag-web/assets/index-CfbnXCsV.js"></script>
   </head>
   <body>
     <div
