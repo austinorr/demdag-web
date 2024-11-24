@@ -448,7 +448,7 @@ function getRelativeMousePosition(event, target) {
   };
 }
 
-function debounce(callback, wait) {
+function _debounce(callback, wait) {
   var timeout;
   return function (e) {
     clearTimeout(timeout);
@@ -456,6 +456,14 @@ function debounce(callback, wait) {
     timeout = setTimeout(() => {
       callback(e);
     }, wait);
+  };
+}
+
+function throttle(callback, wait) {
+  var timeout;
+  return function (e) {
+    if (timeout) return;
+    timeout = setTimeout(() => (callback(e), (timeout = undefined)), wait);
   };
 }
 
@@ -508,7 +516,7 @@ const onMove = (e) => {
 
 document
   .querySelector("#canvas")
-  .addEventListener("pointermove", debounce(onMove, 16)); // debounce to 60fps to improve pan on mobile
+  .addEventListener("pointermove", throttle(onMove, 16)); // debounce to 60fps to improve pan on mobile
 
 document.addEventListener("resize", render);
 
