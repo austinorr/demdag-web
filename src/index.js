@@ -508,7 +508,7 @@ const onMove = (e) => {
 
 document
   .querySelector("#canvas")
-  .addEventListener("pointermove", debounce(onMove, 3));
+  .addEventListener("pointermove", debounce(onMove, 16)); // debounce to 60fps to improve pan on mobile
 
 document.addEventListener("resize", render);
 
