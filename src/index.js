@@ -510,7 +510,7 @@ document.querySelector("#canvas").addEventListener(
 document
   .querySelector("#canvas")
   .addEventListener("touchend", function (event) {
-    touchCount--;
+    touchCount = 0;
   });
 
 const onMove = (e) => {
