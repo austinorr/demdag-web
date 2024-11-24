@@ -496,15 +496,22 @@ const mobileAndTabletCheck = function () {
 
 const isMobile = mobileAndTabletCheck();
 
+let touchCount = 0;
 document.querySelector("#canvas").addEventListener(
   "touchstart",
   function (event) {
-    if (event.touches.length == 1) {
+    touchCount++;
+    if (event.touches.length === 1 && touchCount === 1) {
       event.preventDefault();
     }
   },
   { passive: false }
 );
+document
+  .querySelector("#canvas")
+  .addEventListener("touchend", function (event) {
+    touchCount--;
+  });
 
 const onMove = (e) => {
   const pos = getNoPaddingNoBorderCanvasRelativeMousePosition(e);
