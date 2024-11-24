@@ -471,7 +471,9 @@ function getNoPaddingNoBorderCanvasRelativeMousePosition(event, target) {
 document.querySelector("#canvas").addEventListener(
   "touchstart",
   function (event) {
-    event.preventDefault();
+    if (event.touches.length == 1) {
+      event.preventDefault();
+    }
   },
   { passive: false }
 );
