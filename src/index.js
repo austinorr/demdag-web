@@ -39,8 +39,8 @@ function adjustZoom(inc) {
 
 function resizeCanvasToDisplaySize(canvas, multiplier) {
   multiplier = multiplier || 1;
-  const width = (canvas.clientWidth * multiplier) | 0;
-  const height = (canvas.clientHeight * multiplier) | 0;
+  const width = canvas.clientWidth * multiplier || 0;
+  const height = canvas.clientHeight * multiplier || 0;
   if (canvas.width !== width || canvas.height !== height) {
     canvas.width = width;
     canvas.height = height;
@@ -163,6 +163,17 @@ async function loadImages(urls, callback) {
 }
 
 function render() {
+  try {
+    _render();
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+function _render() {
+  if (!(images.length > 0) || !(images[0]?.width > 0)) {
+    return;
+  }
   // Create a buffer to put three 2d clip space points in
   var positionBuffer = gl.createBuffer();
 
