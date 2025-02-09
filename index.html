@@ -61,8 +61,6 @@
       void main() {
 
         vec2 mpos = u_mouse / u_resolution;
-        vec2 ss = vec2(gl_FragCoord.x / u_zoom , (u_resolution.y-gl_FragCoord.y / u_zoom))   ;
-        float mdist = distSquared(u_mouse, ss );
         vec4 dvec = texture2D(u_image0, mpos);
         vec4 fvec = texture2D(u_image1, mpos);
 
@@ -79,15 +77,18 @@
 
         if (d >= dv && f <= fv) {
           gl_FragColor *= vec4(0.1, 0.5, 0.8, 1.0);
+
+          // boost blue channel to pure blue so we can count it up.
+          gl_FragColor += vec4(0.0, 0.0, 1.0, 0.0);
         }
+
+        // draw the loupe
+        vec2 ss = vec2(gl_FragCoord.x / u_zoom , (u_resolution.y-gl_FragCoord.y / u_zoom));
+        float mdist = distSquared(u_mouse, ss );
         if (mdist < 10.0) {
-          if (mdist <= 1.0) {
-            gl_FragColor *= vec4(0.0, 0.8, 0.0, 1.0);
-          } else if (mdist > 7.0) {
-            gl_FragColor *= vec4(0.33, 0.33, 0.33, 1.0);
+          if (mdist <= 1.0 || mdist > 7.0) {
+            gl_FragColor *= vec4(0.33, 0.33, 1.0, 1.0);
           }
-
-
         }
       }
     </script>
@@ -104,7 +105,8 @@
     >
       <div style="text-align: center">
         Hover over the image (or touch) to see the complete watershed
-        delineation upstream of each pixel.</br>On mobile devices, use two fingers to pan.
+        delineation upstream of each pixel.<br />On mobile devices, use two
+        fingers to pan.
       </div>
       <div style="display: flex; margin: 1rem">
         <button onclick="main()">Load Small Example</button>
@@ -113,10 +115,22 @@
         <button onclick="adjustZoom(-1)">Zoom Out -</button>
         <button onclick="resetZoom()">Reset Zoom</button>
       </div>
-    </div>
-    <div style="display: flex; width: 100%">
-      <div style="margin: auto">
-        <canvas id="canvas"></canvas>
+
+      <table>
+        <tr>
+          <td align="right" width="50%">Area (sq. meters) =</td>
+          <td><span id="area_sqm"></span></td>
+        </tr>
+        <tr>
+          <td align="right" width="50%">Area (acres) =</td>
+          <td><span id="area_acres"></span></td>
+        </tr>
+      </table>
+
+      <div style="display: flex; width: 100%">
+        <div style="margin: auto">
+          <canvas id="canvas"></canvas>
+        </div>
       </div>
     </div>
   </body>

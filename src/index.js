@@ -296,6 +296,35 @@ function _render() {
   gl.bindTexture(gl.TEXTURE_2D, textures[2]);
 
   gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+  let width = gl.canvas.width;
+  let height = gl.canvas.height;
+  const pixels = new Uint8Array(width * height * 4); // 4 for RGBA
+  gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+
+  // the pixels with blue channel set to 255 are 'in' the watershed.
+  // this will add them up and render the result to the page.
+  let w_size = 0;
+
+  for (let i = 0; i < height; i++) {
+    for (let j = 0; j < width; j++) {
+      const idx = 4 * i * width + 4 * j;
+
+      if (pixels[idx + 2] >= 255) {
+        w_size += 1;
+      }
+    }
+  }
+
+  let npix = Math.floor(w_size / (zoom * zoom));
+
+  let sqm = npix * 10 * 10;
+  let spanm = document.getElementById("area_sqm");
+  spanm.innerText = sqm.toLocaleString();
+
+  let acres = sqm / 4046.86;
+  let spanac = document.getElementById("area_acres");
+  spanac.innerText = acres.toLocaleString();
 }
 
 function initGL(images) {
@@ -527,7 +556,7 @@ document
 const onMove = (e) => {
   const pos = getNoPaddingNoBorderCanvasRelativeMousePosition(e);
   mousePos.x = pos.x;
-  mousePos.y = pos.y + (isMobile ? 1 : 0) * -40;
+  mousePos.y = pos.y - isMobile * 40;
   console.debug("mousePos", mousePos);
   render();
 };
