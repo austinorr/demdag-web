@@ -93,6 +93,14 @@
       }
     </script>
     <script type="module" src="./src/index.js"></script>
+    <style>
+      div:has(> input:checked) {
+        border: none;
+        border-radius: 2pt;
+        outline: 1.5px dimgrey solid;
+        outline-offset: 1px;
+      }
+    </style>
   </head>
   <body>
     <div
@@ -108,24 +116,27 @@
         delineation upstream of each pixel.<br />On mobile devices, use two
         fingers to pan.
       </div>
-      <div style="display: flex; margin: 1rem">
-        <button onclick="main()">Load Small Example</button>
-        <button onclick="mainLG()">Load Large Example</button>
+      <div style="display: flex; margin-top: 1rem">
+        <button onclick="main('sm')">Load Small Example</button>
+        <button onclick="main('lg')">Load Large Example</button>
         <button onclick="adjustZoom(1)">Zoom In +</button>
         <button onclick="adjustZoom(-1)">Zoom Out -</button>
         <button onclick="resetZoom()">Reset Zoom</button>
       </div>
-
-      <table>
-        <tr>
-          <td align="right" width="50%">Area (sq. meters) =</td>
-          <td><span id="area_sqm"></span></td>
-        </tr>
-        <tr>
-          <td align="right" width="50%">Area (acres) =</td>
-          <td><span id="area_acres"></span></td>
-        </tr>
-      </table>
+      <div id="area-units" style="display: flex; margin: 1rem"></div>
+      <div
+        id="area-summary"
+        style="
+          position: absolute;
+          min-width: 100vw;
+          transform: translate(-100%, -100%);
+          transition: 0.05s ease-out;
+          pointer-events: none;
+          text-align: right;
+        "
+      >
+        Area = <span id="area_value"></span>
+      </div>
 
       <div style="display: flex; width: 100%">
         <div style="margin: auto">

@@ -15,6 +15,10 @@ var textures = [];
 var zooms = [0.25, 0.5, 1, 2, 4, 8, 16];
 var zix = 2;
 
+var npixels = 0; // number of pixels in the delineation
+const sqmeters_per_pixel = 100; //
+var from_sqm_conversion_factor = 1; //
+
 function resetZoom() {
   zoom = 1;
   zix = 2;
@@ -165,6 +169,7 @@ async function loadImages(urls, callback) {
 function render() {
   try {
     _render();
+    console.debug("rendered!");
   } catch (e) {
     console.error(e);
   }
@@ -316,15 +321,7 @@ function _render() {
     }
   }
 
-  let npix = Math.floor(w_size / (zoom * zoom));
-
-  let sqm = npix * 10 * 10;
-  let spanm = document.getElementById("area_sqm");
-  spanm.innerText = sqm.toLocaleString();
-
-  let acres = sqm / 4046.86;
-  let spanac = document.getElementById("area_acres");
-  spanac.innerText = acres.toLocaleString();
+  npixels = Math.floor(w_size / (zoom * zoom));
 }
 
 function initGL(images) {
@@ -534,7 +531,17 @@ const mobileAndTabletCheck = function () {
   return check;
 };
 
-const isMobile = mobileAndTabletCheck();
+function isTouchDevice() {
+  try {
+    //We try to create TouchEvent. It would fail for desktops and throw error
+    document.createEvent("TouchEvent");
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+const isMobile = isTouchDevice() || mobileAndTabletCheck();
 
 let touchCount = 0;
 document.querySelector("#canvas").addEventListener(
@@ -552,13 +559,26 @@ document
   .addEventListener("touchend", function (event) {
     touchCount = 0;
   });
-
+let area_summary = document.getElementById("area-summary");
 const onMove = (e) => {
   const pos = getNoPaddingNoBorderCanvasRelativeMousePosition(e);
+  const offset = isMobile * 50;
   mousePos.x = pos.x;
-  mousePos.y = pos.y - isMobile * 40;
+  mousePos.y = pos.y - offset;
   console.debug("mousePos", mousePos);
   render();
+
+  try {
+    //PageX and PageY return the position of client's cursor from top left of screen
+    let x = e.pageX;
+    let y = e.pageY;
+
+    area_summary.style.left = x + "px";
+    area_summary.style.top = y - offset + "px";
+  } catch (e) {
+    console.error(e);
+  }
+  updateArea();
 };
 
 document
@@ -567,7 +587,7 @@ document
 
 document.addEventListener("resize", render);
 
-async function main() {
+async function mainSM() {
   zix = 3;
   zoom = zooms[zix];
   await loadImages([discURL, finiURL, bgURL], initGL);
@@ -579,9 +599,82 @@ async function mainLG() {
   await loadImages([discURL_LG, finiURL_LG, bgURL_LG], initGL);
 }
 
+async function main(example) {
+  if (!example) {
+    const urlParams = new URLSearchParams(window.location.search);
+    example = urlParams.get("example");
+  }
+
+  if (example == "lg") {
+    window.history.pushState({}, document.title, "./?example=lg");
+    mainLG();
+    return;
+  }
+  window.history.pushState({}, document.title, "./");
+  mainSM();
+}
+
+function changeUnits(factor) {
+  from_sqm_conversion_factor = factor;
+  maybeShowAreaSummary();
+}
+
+function maybeShowAreaSummary() {
+  if (!from_sqm_conversion_factor) {
+    document.getElementById("area-summary").style.display = "none";
+    return;
+  }
+  document.getElementById("area-summary").style.display = "block";
+}
+
+document
+  .querySelector("#canvas")
+  .addEventListener("mouseenter", maybeShowAreaSummary);
+
+document.querySelector("#canvas").addEventListener("mouseexit", () => {
+  document.getElementById("area-summary").style.display = "none";
+});
+
+function updateArea() {
+  let area = npixels * sqmeters_per_pixel * from_sqm_conversion_factor;
+  let area_str = area.toLocaleString();
+
+  let area_value = document.getElementById("area_value");
+  area_value.innerText = area_str;
+}
+
+const units = [
+  { id: "acres", label: "Acres", from_sqm: 1 / 4046.86 },
+  { id: "sqmi", label: "Sq Mi", from_sqm: 1 / 2589988.110336 },
+  { id: "sqm", label: "Sq M", from_sqm: 1 },
+  { id: "sqkm", label: "Sq Km", from_sqm: 1 / 1000 },
+  { id: "pixels", label: "Pixels", from_sqm: 1 / 100 },
+  { id: "none", label: "Hide", from_sqm: 0 },
+];
+
+function createAreaButtons() {
+  let buttonContainer = document.getElementById("area-units");
+  let inputHtml = buttonContainer.innerHTML;
+
+  for (const u of units) {
+    inputHtml += `
+    <div style="padding: 0 0.5em 0 0; min-width: 6ch;">
+      <input type="radio" id="units-${u.id}" name="units" value="${u.id}" onChange=changeUnits(${u.from_sqm})>
+      <label for="units-${u.id}" >${u.label}</label>
+    </div>
+    `;
+  }
+
+  buttonContainer.innerHTML = inputHtml;
+  let defaultUnits = document.querySelector(`input[id='units-${units[0].id}']`);
+  defaultUnits.checked = true;
+  changeUnits(units[0].from_sqm);
+}
+
 window.main = main;
-window.mainLG = mainLG;
 window.adjustZoom = adjustZoom;
 window.resetZoom = resetZoom;
+window.changeUnits = changeUnits;
 
+createAreaButtons();
 main();
