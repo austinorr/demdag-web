@@ -58,9 +58,134 @@
           return dot( C, C );
       }
 
+      vec2 pos_maxacc_9() {
+        vec2 mpos = u_mouse / u_resolution;
+        int maxacc = 0;
+        for (float i = -1.0; i <= 1.0; i += 1.0) {
+            for (float j = -1.0; j <= 1.0; j += 1.0) {
+              // Shader operations
+              vec2 delta = vec2(i, j);
+              vec2 newpos = (u_mouse + delta) / u_resolution ;
+
+              vec4 newdvec = texture2D(u_image0, newpos);
+              int newdv = buildInt(newdvec);
+
+              vec4 newfvec = texture2D(u_image1, newpos);
+              int newfv = buildInt(newfvec);
+
+              int acc = newfv - newdv;
+
+              if (acc > maxacc) {
+                maxacc = acc;
+                mpos = newpos;
+              }
+          }
+        }
+
+        return mpos;
+
+      }
+
+      vec2 pos_maxacc_25() {
+        vec2 mpos = u_mouse / u_resolution;
+        int maxacc = 0;
+        for (float i = -2.0; i <= 2.0; i += 1.0) {
+            for (float j = -2.0; j <= 2.0; j += 1.0) {
+              // Shader operations
+              vec2 delta = vec2(i, j);
+              vec2 newpos = (u_mouse + delta) / u_resolution ;
+
+              vec4 newdvec = texture2D(u_image0, newpos);
+              int newdv = buildInt(newdvec);
+
+              vec4 newfvec = texture2D(u_image1, newpos);
+              int newfv = buildInt(newfvec);
+
+              int acc = newfv - newdv;
+
+              if (acc > maxacc) {
+                maxacc = acc;
+                mpos = newpos;
+              }
+          }
+        }
+
+        return mpos;
+
+      }
+
+      vec2 pos_maxacc_49() {
+        vec2 mpos = u_mouse / u_resolution;
+        int maxacc = 0;
+        for (float i = -3.0; i <= 3.0; i += 1.0) {
+            for (float j = -3.0; j <= 3.0; j += 1.0) {
+              // Shader operations
+              vec2 delta = vec2(i, j);
+              vec2 newpos = (u_mouse + delta) / u_resolution ;
+
+              vec4 newdvec = texture2D(u_image0, newpos);
+              int newdv = buildInt(newdvec);
+
+              vec4 newfvec = texture2D(u_image1, newpos);
+              int newfv = buildInt(newfvec);
+
+              int acc = newfv - newdv;
+
+              if (acc > maxacc) {
+                maxacc = acc;
+                mpos = newpos;
+              }
+          }
+        }
+
+        return mpos;
+
+      }
+
+      vec2 pos_maxacc_81() {
+        vec2 mpos = u_mouse / u_resolution;
+        int maxacc = 0;
+        for (float i = -4.0; i <= 4.0; i += 1.0) {
+            for (float j = -4.0; j <= 4.0; j += 1.0) {
+              // Shader operations
+              vec2 delta = vec2(i, j);
+              vec2 newpos = (u_mouse + delta) / u_resolution ;
+
+              vec4 newdvec = texture2D(u_image0, newpos);
+              int newdv = buildInt(newdvec);
+
+              vec4 newfvec = texture2D(u_image1, newpos);
+              int newfv = buildInt(newfvec);
+
+              int acc = newfv - newdv;
+
+              if (acc > maxacc) {
+                maxacc = acc;
+                mpos = newpos;
+              }
+          }
+        }
+
+        return mpos;
+
+      }
+
+
       void main() {
 
         vec2 mpos = u_mouse / u_resolution;
+        if (u_zoom < 4.0) {
+          if (u_zoom <= 0.25) {
+            mpos = pos_maxacc_81();
+          } else if (u_zoom == 0.5) {
+            mpos = pos_maxacc_49();
+          } else if (u_zoom == 1.0) {
+            mpos = pos_maxacc_25();
+          } else if (u_zoom == 2.0) {
+            mpos = pos_maxacc_9();
+          }
+        }
+
         vec4 dvec = texture2D(u_image0, mpos);
         vec4 fvec = texture2D(u_image1, mpos);
 
