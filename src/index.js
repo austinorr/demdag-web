@@ -168,8 +168,10 @@ async function loadImages(urls, callback) {
 
 function render() {
   try {
+    let start = performance.now();
     _render();
-    console.debug("rendered!");
+    let end = performance.now();
+    console.debug(`rendered in ${(1000 / (end - start)).toFixed(2)} fps`);
   } catch (e) {
     console.error(e);
   }
@@ -350,7 +352,8 @@ function initGL(images) {
     if (!shaderScript) {
       throw "*** Error: unknown script element" + scriptId;
     }
-    shaderSource = shaderScript.text;
+    let prefix = ""; //"#version 300 es";
+    shaderSource = `${prefix}\n${shaderScript.text}`;
 
     if (shaderScript.type === "x-shader/x-vertex") {
       shaderType = gl.VERTEX_SHADER;
@@ -404,7 +407,7 @@ function initGL(images) {
   if (!linked) {
     // something went wrong with the link
     const lastError = gl.getProgramInfoLog(program);
-    errFn("Error in program linking:" + lastError);
+    console.error("Error in program linking:" + lastError);
 
     gl.deleteProgram(program);
     return null;
