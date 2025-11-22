@@ -33,6 +33,7 @@ function fps_cache_time(ms) {
 function resetZoom() {
   zoom = 1;
   zix = 2;
+  _setZoom(zoom);
   render();
 }
 
@@ -54,6 +55,7 @@ function adjustZoom(inc) {
   }
   zix = newZix;
   zoom = zooms[zix];
+  _setZoom(zoom);
   render();
 }
 
@@ -180,7 +182,6 @@ function render() {
   } catch (e) {
     console.error(e);
   }
-  _setZoom(zoom);
 
   let fps_avg =
     fps_cache.reduce((sum, currentValue) => sum + currentValue, 0) /
