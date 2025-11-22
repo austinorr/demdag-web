@@ -578,7 +578,7 @@ document
 
 const onMove = (e) => {
   const pos = getNoPaddingNoBorderCanvasRelativeMousePosition(e);
-  const offset = isMobile * 50;
+  const offset = (isMobile * 50) / zoom;
   mousePos.x = pos.x;
   mousePos.y = pos.y - offset;
   // console.debug("mousePos", mousePos);
@@ -586,14 +586,16 @@ const onMove = (e) => {
 
   //PageX and PageY return the position of client's cursor from top left of screen
   if (showArea) {
-    let x = e.pageX;
-    let y = e.pageY;
-    updateArea({ x, y, offset });
+    updateArea();
   }
 };
 
 document.querySelector("#canvas").addEventListener("pointermove", onMove);
 document.addEventListener("resize", render);
+document.addEventListener("scroll", () => {
+  render();
+  updateArea();
+});
 
 async function mainSM() {
   zix = 3;
@@ -620,6 +622,7 @@ async function main(example) {
   }
   window.history.pushState({}, document.title, "./");
   mainSM();
+  updateArea();
 }
 
 function changeUnits(factor) {
@@ -628,13 +631,14 @@ function changeUnits(factor) {
 }
 
 function maybeShowAreaSummary() {
+  let area_row = document.getElementById("area_row");
   if (!from_sqm_conversion_factor) {
     showArea = false;
-    area_summary.style.display = "none";
-    return;
+    area_row.style.display = "none";
+  } else {
+    showArea = true;
+    area_row.style.display = "";
   }
-  area_summary.style.display = "block";
-  showArea = true;
 }
 
 document
@@ -645,12 +649,12 @@ document.querySelector("#canvas").addEventListener("mouseexit", () => {
   area_summary.style.display = "none";
 });
 
-function updateArea({ x, y, offset }) {
-  try {
-    area_summary.style.left = x + "px";
-    area_summary.style.top = y - offset + "px";
-  } catch (e) {
-    console.error(e);
+function updateArea() {
+  let c = document.getElementById("canvas").getBoundingClientRect();
+  area_summary.style.top = c.top + 15 + "px";
+  area_summary.style.left = "15px";
+  if (c.top < 0) {
+    area_summary.style.top = "15px";
   }
 
   let area = npixels * sqmeters_per_pixel * from_sqm_conversion_factor;
@@ -681,12 +685,6 @@ function createAreaButtons() {
     </div>
     `;
   }
-
-  inputHtml += `
-    <div style="padding: 0 0.5em 0 1em; min-width: 8ch; display: flex; align-items: flex-end; ">
-        FPS:&nbsp<span id="fps"></span>
-    </div>
-    `;
 
   buttonContainer.innerHTML = inputHtml;
   let u = units.at(-1);
