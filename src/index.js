@@ -591,10 +591,7 @@ const onMove = (e) => {
   }
 };
 
-document
-  .querySelector("#canvas")
-  .addEventListener("pointermove", throttle(onMove, 16)); // debounce to 60fps to improve pan on mobile
-
+document.querySelector("#canvas").addEventListener("pointermove", onMove);
 document.addEventListener("resize", render);
 
 async function mainSM() {
