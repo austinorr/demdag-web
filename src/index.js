@@ -574,7 +574,7 @@ document
   .addEventListener("touchend", function (event) {
     touchCount = 0;
   });
-let area_summary = document.getElementById("area-summary");
+
 const onMove = (e) => {
   const pos = getNoPaddingNoBorderCanvasRelativeMousePosition(e);
   const offset = isMobile * 50;
