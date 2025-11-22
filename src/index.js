@@ -16,14 +16,31 @@ var zooms = [0.25, 0.5, 1, 2, 4, 8, 16];
 var zix = 2;
 
 var npixels = 0; // number of pixels in the delineation
+var showArea = false;
 const sqmeters_per_pixel = 100; //
 var from_sqm_conversion_factor = 1; //
+
+var fps_cache = new Array(20);
+fps_cache._offset = 0;
+
+const area_summary = document.getElementById("area-summary");
+
+function fps_cache_time(ms) {
+  fps_cache[fps_cache._offset++] = ms;
+  fps_cache._offset %= fps_cache.length;
+}
 
 function resetZoom() {
   zoom = 1;
   zix = 2;
-  console.debug("zoom: ", zoom);
   render();
+}
+
+function _setZoom(zoom) {
+  console.debug("zoom: ", zoom);
+  let canvas = document.getElementById("canvas");
+  canvas.style.width = `${gl.canvas.width * zoom}px`;
+  canvas.style.height = `${gl.canvas.height * zoom}px`;
 }
 
 function adjustZoom(inc) {
@@ -37,20 +54,7 @@ function adjustZoom(inc) {
   }
   zix = newZix;
   zoom = zooms[zix];
-  console.debug("zoom: ", zoom);
   render();
-}
-
-function resizeCanvasToDisplaySize(canvas, multiplier) {
-  multiplier = multiplier || 1;
-  const width = canvas.clientWidth * multiplier || 0;
-  const height = canvas.clientHeight * multiplier || 0;
-  if (canvas.width !== width || canvas.height !== height) {
-    canvas.width = width;
-    canvas.height = height;
-    return true;
-  }
-  return false;
 }
 
 function loadImage(url, callback) {
@@ -171,10 +175,18 @@ function render() {
     let start = performance.now();
     _render();
     let end = performance.now();
-    console.debug(`rendered in ${(1000 / (end - start)).toFixed(2)} fps`);
+    let fps = 1000 / (end - start);
+    fps_cache_time(Number.isFinite(fps) ? fps : 1000);
   } catch (e) {
     console.error(e);
   }
+  _setZoom(zoom);
+
+  let fps_avg =
+    fps_cache.reduce((sum, currentValue) => sum + currentValue, 0) /
+    fps_cache.length;
+  let fpsContainer = document.getElementById("fps");
+  fpsContainer.innerHTML = `${fps_avg.toFixed(0)}`;
 }
 
 function _render() {
@@ -189,8 +201,8 @@ function _render() {
   // Set a rectangle the same size as the image.
   setRectangle(gl, 0, 0, images[0].width, images[0].height);
 
-  let w = images[0].width * zoom;
-  let h = images[0].height * zoom;
+  let w = images[0].width;
+  let h = images[0].height;
 
   if (w >= 4096 || h > 4096) {
     alert("texture too large!");
@@ -281,18 +293,14 @@ function _render() {
   );
 
   // set the resolution
-  gl.uniform2f(
-    resolutionLocation,
-    gl.canvas.width / zoom,
-    gl.canvas.height / zoom
-  );
-  gl.uniform2f(mouseLocation, mousePos.x / zoom, mousePos.y / zoom);
+  gl.uniform2f(resolutionLocation, gl.canvas.width, gl.canvas.height);
+  gl.uniform2f(mouseLocation, mousePos.x, mousePos.y);
   gl.uniform1f(uzoom, zoom);
 
   // set which texture units to render with.
   gl.uniform1i(u_image0Location, 0); // texture unit 0
   gl.uniform1i(u_image1Location, 1); // texture unit 1
-  gl.uniform1i(u_image2Location, 2); // texture unit 1
+  gl.uniform1i(u_image2Location, 2); // texture unit 2
 
   // Set each texture unit to use a particular texture.
   gl.activeTexture(gl.TEXTURE0);
@@ -303,7 +311,12 @@ function _render() {
   gl.bindTexture(gl.TEXTURE_2D, textures[2]);
 
   gl.drawArrays(gl.TRIANGLES, 0, 6);
+  if (showArea) {
+    readPixels();
+  }
+}
 
+function readPixels() {
   let width = gl.canvas.width;
   let height = gl.canvas.height;
   const pixels = new Uint8Array(width * height * 4); // 4 for RGBA
@@ -322,8 +335,7 @@ function _render() {
       }
     }
   }
-
-  npixels = Math.floor(w_size / (zoom * zoom));
+  npixels = w_size;
 }
 
 function initGL(images) {
@@ -334,7 +346,7 @@ function initGL(images) {
     console.error("No Images!");
     return;
   }
-  var canvas = document.querySelector("#canvas");
+  var canvas = document.getElementById("canvas");
   gl = canvas.getContext("webgl");
   if (!gl) {
     console.error("Cannot attach as webgl canvas to the document!");
@@ -568,20 +580,15 @@ const onMove = (e) => {
   const offset = isMobile * 50;
   mousePos.x = pos.x;
   mousePos.y = pos.y - offset;
-  console.debug("mousePos", mousePos);
+  // console.debug("mousePos", mousePos);
   render();
 
-  try {
-    //PageX and PageY return the position of client's cursor from top left of screen
+  //PageX and PageY return the position of client's cursor from top left of screen
+  if (showArea) {
     let x = e.pageX;
     let y = e.pageY;
-
-    area_summary.style.left = x + "px";
-    area_summary.style.top = y - offset + "px";
-  } catch (e) {
-    console.error(e);
+    updateArea({ x, y, offset });
   }
-  updateArea();
 };
 
 document
@@ -624,10 +631,12 @@ function changeUnits(factor) {
 
 function maybeShowAreaSummary() {
   if (!from_sqm_conversion_factor) {
-    document.getElementById("area-summary").style.display = "none";
+    showArea = false;
+    area_summary.style.display = "none";
     return;
   }
-  document.getElementById("area-summary").style.display = "block";
+  area_summary.style.display = "block";
+  showArea = true;
 }
 
 document
@@ -635,10 +644,17 @@ document
   .addEventListener("mouseenter", maybeShowAreaSummary);
 
 document.querySelector("#canvas").addEventListener("mouseexit", () => {
-  document.getElementById("area-summary").style.display = "none";
+  area_summary.style.display = "none";
 });
 
-function updateArea() {
+function updateArea({ x, y, offset }) {
+  try {
+    area_summary.style.left = x + "px";
+    area_summary.style.top = y - offset + "px";
+  } catch (e) {
+    console.error(e);
+  }
+
   let area = npixels * sqmeters_per_pixel * from_sqm_conversion_factor;
   let area_str = area.toLocaleString();
 
@@ -668,10 +684,17 @@ function createAreaButtons() {
     `;
   }
 
+  inputHtml += `
+    <div style="padding: 0 0.5em 0 1em; min-width: 8ch; display: flex; align-items: flex-end; ">
+        FPS:&nbsp<span id="fps"></span>
+    </div>
+    `;
+
   buttonContainer.innerHTML = inputHtml;
-  let defaultUnits = document.querySelector(`input[id='units-${units[0].id}']`);
+  let u = units.at(-1);
+  let defaultUnits = document.querySelector(`input[id='units-${u.id}']`);
   defaultUnits.checked = true;
-  changeUnits(units[0].from_sqm);
+  changeUnits(u.from_sqm);
 }
 
 window.main = main;
