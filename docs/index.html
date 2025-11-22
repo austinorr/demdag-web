@@ -238,7 +238,7 @@
         outline-offset: 1px;
       }
     </style>
-    <script type="module" crossorigin src="/demdag-web/assets/index-C1h5AJ81.js"></script>
+    <script type="module" crossorigin src="/demdag-web/assets/index-DWehlOmm.js"></script>
   </head>
   <body>
     <div
@@ -265,17 +265,24 @@
       <div
         id="area-summary"
         style="
-          position: absolute;
-          min-width: 100vw;
-          transform: translate(-100%, -100%);
-          transition: 0.05s ease-out;
+          position: fixed;
           pointer-events: none;
-          text-align: right;
+          background-color: rgba(255, 255, 255, 0.6);
+          padding: 1em;
+          border-radius: 0.25em;
         "
       >
-        Area = <span id="area_value"></span>
+        <table>
+          <tr>
+            <td>FPS:</td>
+            <td><span id="fps"></span></td>
+          </tr>
+          <tr id="area_row">
+            <td>Area:</td>
+            <td><span id="area_value"></span></td>
+          </tr>
+        </table>
       </div>
-
       <div style="display: flex; width: 100%">
         <div style="margin: auto">
           <canvas id="canvas" style="image-rendering: pixelated"></canvas>
