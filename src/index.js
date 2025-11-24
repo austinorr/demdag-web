@@ -567,7 +567,7 @@ document.querySelector("#canvas").addEventListener("pointermove", onMove);
 document.addEventListener("scroll", locateHUD);
 
 async function mainSM() {
-  zix = 4;
+  zix = 3;
   zoom = zooms[zix];
   await loadImages([discURL, finiURL, bgURL], initGL);
 }
