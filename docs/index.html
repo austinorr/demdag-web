@@ -224,8 +224,8 @@
 
         // draw the loupe
         vec2 ss = vec2(gl_FragCoord.x, u_resolution.y - gl_FragCoord.y);
-        float mdist = distance(floor(u_mouse) + vec2(0.5, 0.5), ss);
-        if ((mdist < 1.41422 * 1.8) && (mdist > 1.41422 * 1.5)) {
+        float mdist = distance(floor(u_mouse) + vec2(0.5, 0.5), ss) * min(u_zoom, 1.0);
+        if (mdist < 1.41422 * 1.8 && (mdist > 1.41422 * 1.2 || mdist <= 0.6)) {
           gl_FragColor *= vec4(0.2, 0.2, 0.2, 1.0);
         }
       }
@@ -260,7 +260,7 @@
         font-family: sans-serif;
       }
     </style>
-    <script type="module" crossorigin src="/demdag-web/assets/index-COLQL2Qu.js"></script>
+    <script type="module" crossorigin src="/demdag-web/assets/index-DGVZ0LpL.js"></script>
   </head>
   <body>
     <div
@@ -307,10 +307,6 @@
         "
       >
         <table>
-          <tr>
-            <td style="text-align: right">FPS:</td>
-            <td><span id="fps"></span></td>
-          </tr>
           <tr id="area_row">
             <td style="text-align: right">Area:</td>
             <td><span id="area_value"></span></td>
