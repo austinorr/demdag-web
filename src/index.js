@@ -20,15 +20,7 @@ var showArea = false;
 const sqmeters_per_pixel = 100; //
 var from_sqm_conversion_factor = 1; //
 
-var fps_cache = new Array(20);
-fps_cache._offset = 0;
-
 const area_summary = document.getElementById("area-summary");
-
-function fps_cache_time(ms) {
-  fps_cache[fps_cache._offset++] = ms;
-  fps_cache._offset %= fps_cache.length;
-}
 
 function _setZoom(zoom) {
   console.debug("zoom: ", zoom);
@@ -167,28 +159,15 @@ async function loadImages(urls, callback) {
   }
 }
 
-const updateFPS = throttle(() => {
-  let fps_avg =
-    fps_cache.reduce((sum, currentValue) => sum + currentValue, 0) /
-    fps_cache.length;
-  let fpsContainer = document.getElementById("fps");
-  fpsContainer.innerHTML = `${fps_avg.toLocaleString(undefined, {
-    maximumFractionDigits: 0,
-  })}`;
-}, 250);
-
 function render() {
   try {
-    let start = performance.now();
-    _render();
-    let end = performance.now();
-    let fps = 1000 / (end - start);
-    fps_cache_time(Number.isFinite(fps) ? fps : 1000);
+    _renderThrottle();
   } catch (e) {
     console.error(e);
   }
-  updateFPS();
 }
+
+const _renderThrottle = throttle(_render, 1000 / 60);
 
 function _render() {
   if (!(images.length > 0) || !(images[0]?.width > 0)) {
@@ -226,15 +205,6 @@ function _render() {
   var u_image0Location = gl.getUniformLocation(program, "u_image0");
   var u_image1Location = gl.getUniformLocation(program, "u_image1");
   var u_image2Location = gl.getUniformLocation(program, "u_image2");
-
-  // let resized = resizeCanvasToDisplaySize(gl.canvas);
-  // if (resized) {
-  gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
-  // }
-
-  // Clear the canvas
-  gl.clearColor(0, 0, 0, 0);
-  gl.clear(gl.COLOR_BUFFER_BIT);
 
   // Tell it to use our program (pair of shaders)
   gl.useProgram(program);
@@ -303,6 +273,7 @@ function _render() {
   if (showArea) {
     readPixels();
   }
+  gl.finish();
 }
 
 function readPixels() {
@@ -473,6 +444,7 @@ function initGL(images) {
 
   gl.canvas.width = w;
   gl.canvas.height = h;
+  gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
 
   render();
   _setZoom(zoom);
@@ -591,16 +563,11 @@ const onMove = (e) => {
   }
 };
 
-document
-  .querySelector("#canvas")
-  .addEventListener("pointermove", throttle(onMove, 1000 / 60));
-document.addEventListener("resize", render);
-document.addEventListener("scroll", () => {
-  locateHUD();
-});
+document.querySelector("#canvas").addEventListener("pointermove", onMove);
+document.addEventListener("scroll", locateHUD);
 
 async function mainSM() {
-  zix = 3;
+  zix = 4;
   zoom = zooms[zix];
   await loadImages([discURL, finiURL, bgURL], initGL);
 }
@@ -634,13 +601,12 @@ function changeUnits(factor) {
 }
 
 function maybeShowAreaSummary() {
-  let area_row = document.getElementById("area_row");
   if (!from_sqm_conversion_factor) {
     showArea = false;
-    area_row.style.display = "none";
+    area_summary.style.display = "none";
   } else {
     showArea = true;
-    area_row.style.display = "";
+    area_summary.style.display = "";
   }
 }
 
