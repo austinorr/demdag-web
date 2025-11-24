@@ -30,18 +30,14 @@ function fps_cache_time(ms) {
   fps_cache._offset %= fps_cache.length;
 }
 
-function resetZoom() {
-  zoom = 1;
-  zix = 2;
-  _setZoom(zoom);
-  render();
-}
-
 function _setZoom(zoom) {
   console.debug("zoom: ", zoom);
   let canvas = document.getElementById("canvas");
   canvas.style.width = `${gl.canvas.width * zoom}px`;
   canvas.style.height = `${gl.canvas.height * zoom}px`;
+  let z = document.getElementById("zoom");
+  z.innerHTML = zoom;
+  locateHUD();
 }
 
 function adjustZoom(inc) {
@@ -56,7 +52,6 @@ function adjustZoom(inc) {
   zix = newZix;
   zoom = zooms[zix];
   _setZoom(zoom);
-  render();
 }
 
 function loadImage(url, callback) {
@@ -172,6 +167,16 @@ async function loadImages(urls, callback) {
   }
 }
 
+const updateFPS = throttle(() => {
+  let fps_avg =
+    fps_cache.reduce((sum, currentValue) => sum + currentValue, 0) /
+    fps_cache.length;
+  let fpsContainer = document.getElementById("fps");
+  fpsContainer.innerHTML = `${fps_avg.toLocaleString(undefined, {
+    maximumFractionDigits: 0,
+  })}`;
+}, 250);
+
 function render() {
   try {
     let start = performance.now();
@@ -182,12 +187,7 @@ function render() {
   } catch (e) {
     console.error(e);
   }
-
-  let fps_avg =
-    fps_cache.reduce((sum, currentValue) => sum + currentValue, 0) /
-    fps_cache.length;
-  let fpsContainer = document.getElementById("fps");
-  fpsContainer.innerHTML = `${fps_avg.toFixed(0)}`;
+  updateFPS();
 }
 
 function _render() {
@@ -201,18 +201,6 @@ function _render() {
   gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
   // Set a rectangle the same size as the image.
   setRectangle(gl, 0, 0, images[0].width, images[0].height);
-
-  let w = images[0].width;
-  let h = images[0].height;
-
-  if (w >= 4096 || h > 4096) {
-    alert("texture too large!");
-    adjustZoom(-1);
-    return;
-  }
-
-  gl.canvas.width = w;
-  gl.canvas.height = h;
 
   // look up where the vertex data needs to go.
   var positionLocation = gl.getAttribLocation(program, "a_position");
@@ -318,8 +306,8 @@ function _render() {
 }
 
 function readPixels() {
-  let width = gl.canvas.width;
-  let height = gl.canvas.height;
+  const width = gl.canvas.width;
+  const height = gl.canvas.height;
   const pixels = new Uint8Array(width * height * 4); // 4 for RGBA
   gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
 
@@ -348,7 +336,7 @@ function initGL(images) {
     return;
   }
   var canvas = document.getElementById("canvas");
-  gl = canvas.getContext("webgl");
+  gl = canvas.getContext("webgl", { antialias: false });
   if (!gl) {
     console.error("Cannot attach as webgl canvas to the document!");
     return;
@@ -474,7 +462,20 @@ function initGL(images) {
     textures.push(texture);
   }
 
+  let w = images[0].width;
+  let h = images[0].height;
+
+  if (w >= 4096 || h > 4096) {
+    alert("texture too large!");
+    adjustZoom(-1);
+    return;
+  }
+
+  gl.canvas.width = w;
+  gl.canvas.height = h;
+
   render();
+  _setZoom(zoom);
 }
 
 function setRectangle(gl, x, y, width, height) {
@@ -578,10 +579,10 @@ document
 
 const onMove = (e) => {
   const pos = getNoPaddingNoBorderCanvasRelativeMousePosition(e);
-  const offset = (isMobile * 50) / zoom;
+  const mobileOffset = (isMobile * 50) / zoom;
   mousePos.x = pos.x;
-  mousePos.y = pos.y - offset;
-  // console.debug("mousePos", mousePos);
+  mousePos.y = pos.y - mobileOffset;
+  console.debug("mousePos", mousePos);
   render();
 
   //PageX and PageY return the position of client's cursor from top left of screen
@@ -590,11 +591,12 @@ const onMove = (e) => {
   }
 };
 
-document.querySelector("#canvas").addEventListener("pointermove", onMove);
+document
+  .querySelector("#canvas")
+  .addEventListener("pointermove", throttle(onMove, 1000 / 60));
 document.addEventListener("resize", render);
 document.addEventListener("scroll", () => {
-  render();
-  updateArea();
+  locateHUD();
 });
 
 async function mainSM() {
@@ -604,7 +606,7 @@ async function mainSM() {
 }
 
 async function mainLG() {
-  zix = 2;
+  zix = 0;
   zoom = zooms[zix];
   await loadImages([discURL_LG, finiURL_LG, bgURL_LG], initGL);
 }
@@ -618,15 +620,16 @@ async function main(example) {
   if (example == "lg") {
     window.history.pushState({}, document.title, "./?example=lg");
     mainLG();
-    return;
+  } else {
+    window.history.pushState({}, document.title, "./");
+    mainSM();
   }
-  window.history.pushState({}, document.title, "./");
-  mainSM();
-  updateArea();
+  locateHUD();
 }
 
 function changeUnits(factor) {
   from_sqm_conversion_factor = factor;
+  updateArea();
   maybeShowAreaSummary();
 }
 
@@ -649,16 +652,22 @@ document.querySelector("#canvas").addEventListener("mouseexit", () => {
   area_summary.style.display = "none";
 });
 
-function updateArea() {
+function locateHUD() {
+  console.debug("locating hud");
   let c = document.getElementById("canvas").getBoundingClientRect();
   area_summary.style.top = c.top + 15 + "px";
-  area_summary.style.left = "15px";
+  area_summary.style.left = c.left + 15 + "px";
   if (c.top < 0) {
     area_summary.style.top = "15px";
   }
+  if (c.left < 0) {
+    area_summary.style.left = "15px";
+  }
+}
 
+function updateArea() {
   let area = npixels * sqmeters_per_pixel * from_sqm_conversion_factor;
-  let area_str = area.toLocaleString();
+  let area_str = area.toLocaleString(undefined, { maximumFractionDigits: 1 });
 
   let area_value = document.getElementById("area_value");
   area_value.innerText = area_str;
@@ -670,7 +679,7 @@ const units = [
   { id: "sqm", label: "Sq M", from_sqm: 1 },
   { id: "sqkm", label: "Sq Km", from_sqm: 1 / 1000 },
   { id: "pixels", label: "Pixels", from_sqm: 1 / 100 },
-  { id: "none", label: "Hide", from_sqm: 0 },
+  { id: "none", label: "None", from_sqm: 0 },
 ];
 
 function createAreaButtons() {
@@ -679,7 +688,7 @@ function createAreaButtons() {
 
   for (const u of units) {
     inputHtml += `
-    <div style="padding: 0 0.5em 0 0; min-width: 6ch;">
+    <div>
       <input type="radio" id="units-${u.id}" name="units" value="${u.id}" onChange=changeUnits(${u.from_sqm})>
       <label for="units-${u.id}" >${u.label}</label>
     </div>
@@ -695,7 +704,6 @@ function createAreaButtons() {
 
 window.main = main;
 window.adjustZoom = adjustZoom;
-window.resetZoom = resetZoom;
 window.changeUnits = changeUnits;
 
 createAreaButtons();
