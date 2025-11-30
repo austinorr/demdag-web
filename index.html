@@ -39,6 +39,7 @@
       uniform vec2 u_resolution;
       uniform vec2 u_mouse;
       uniform float u_zoom;
+      uniform float u_isSnap;
 
       // our textures
       uniform sampler2D u_image0;
@@ -167,6 +168,10 @@
 
       vec2 get_mpos() {
 
+        if (u_isSnap <= 0.5) {
+          return u_mouse / u_resolution;
+        }
+
         if (u_zoom >= 4.0) {
           return u_mouse / u_resolution;
         }
@@ -239,12 +244,16 @@
         border-radius: 0.5em;
       }
       #area-units div:not(input:checked) {
+        border: 2px solid rgba(255, 255, 255, 255);
         background-color: rgb(228, 228, 228);
         font-weight: bold;
       }
-      #area-units div:has(input:checked) {
+      #area-units div:has(input:checked),
+      button.checked {
         background-color: rgb(110, 180, 255);
         font-weight: bold;
+        border: 2px solid;
+        border-color: rgb(110, 180, 255);
       }
       #area-units input {
         display: none;
@@ -301,6 +310,7 @@
           <button onclick="adjustZoom(1)" style="width: 5ch">+</button>
           <button onclick="adjustZoom(-1)" style="width: 5ch">-</button>
         </div>
+        <button id="enableSnap" class="checked">Snap</button>
       </div>
       <div id="area-units" style="display: flex; margin: 1rem"></div>
       <div

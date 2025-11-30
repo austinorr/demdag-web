@@ -11,6 +11,7 @@ var images = [];
 var zoom = 1;
 var gl, program;
 var textures = [];
+var enableSnap = 1;
 
 var zooms = [0.25, 0.5, 1, 2, 4, 8, 16];
 var zix = 2;
@@ -200,6 +201,7 @@ function _render() {
   var resolutionLocation = gl.getUniformLocation(program, "u_resolution");
   var mouseLocation = gl.getUniformLocation(program, "u_mouse");
   var uzoom = gl.getUniformLocation(program, "u_zoom");
+  var isSnap = gl.getUniformLocation(program, "u_isSnap");
 
   // lookup the sampler locations.
   var u_image0Location = gl.getUniformLocation(program, "u_image0");
@@ -255,6 +257,7 @@ function _render() {
   gl.uniform2f(resolutionLocation, gl.canvas.width, gl.canvas.height);
   gl.uniform2f(mouseLocation, mousePos.x, mousePos.y);
   gl.uniform1f(uzoom, zoom);
+  gl.uniform1f(isSnap, enableSnap);
 
   // set which texture units to render with.
   gl.uniform1i(u_image0Location, 0); // texture unit 0
@@ -668,9 +671,20 @@ function createAreaButtons() {
   changeUnits(u.from_sqm);
 }
 
+function createSnapToggle() {
+  let button = document.getElementById("enableSnap");
+  button.classList.toggle("checked", enableSnap);
+
+  button.addEventListener("click", function () {
+    enableSnap = 1 - enableSnap;
+    button.classList.toggle("checked", enableSnap);
+  });
+}
+
 window.main = main;
 window.adjustZoom = adjustZoom;
 window.changeUnits = changeUnits;
 
 createAreaButtons();
+createSnapToggle();
 main();
