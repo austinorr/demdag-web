@@ -38,8 +38,9 @@
 
       uniform vec2 u_resolution;
       uniform vec2 u_mouse;
+      uniform vec2 u_mpos;
       uniform float u_zoom;
-      uniform float u_isSnap;
+      uniform float u_snap;
 
       // our textures
       uniform sampler2D u_image0;
@@ -54,150 +55,9 @@
         return dv;
       }
 
-      vec2 pos_maxacc_9() {
-        vec2 mpos = u_mouse / u_resolution;
-        int maxacc = 0;
-        for (float i = -1.0; i <= 1.0; i += 1.0) {
-            for (float j = -1.0; j <= 1.0; j += 1.0) {
-              // Shader operations
-              vec2 delta = vec2(i, j);
-              vec2 newpos = (u_mouse + delta) / u_resolution ;
-
-              vec4 newdvec = texture2D(u_image0, newpos);
-              int newdv = buildInt(newdvec);
-
-              vec4 newfvec = texture2D(u_image1, newpos);
-              int newfv = buildInt(newfvec);
-
-              int acc = newfv - newdv;
-
-              if (acc > maxacc) {
-                maxacc = acc;
-                mpos = newpos;
-              }
-          }
-        }
-
-        return mpos;
-
-      }
-
-      vec2 pos_maxacc_25() {
-        vec2 mpos = u_mouse / u_resolution;
-        int maxacc = 0;
-        for (float i = -2.0; i <= 2.0; i += 1.0) {
-            for (float j = -2.0; j <= 2.0; j += 1.0) {
-              // Shader operations
-              vec2 delta = vec2(i, j);
-              vec2 newpos = (u_mouse + delta) / u_resolution ;
-
-              vec4 newdvec = texture2D(u_image0, newpos);
-              int newdv = buildInt(newdvec);
-
-              vec4 newfvec = texture2D(u_image1, newpos);
-              int newfv = buildInt(newfvec);
-
-              int acc = newfv - newdv;
-
-              if (acc > maxacc) {
-                maxacc = acc;
-                mpos = newpos;
-              }
-          }
-        }
-
-        return mpos;
-
-      }
-
-      vec2 pos_maxacc_81() {
-        vec2 mpos = u_mouse / u_resolution;
-        int maxacc = 0;
-        for (float i = -4.0; i <= 4.0; i += 1.0) {
-            for (float j = -4.0; j <= 4.0; j += 1.0) {
-              // Shader operations
-              vec2 delta = vec2(i, j);
-              vec2 newpos = (u_mouse + delta) / u_resolution ;
-
-              vec4 newdvec = texture2D(u_image0, newpos);
-              int newdv = buildInt(newdvec);
-
-              vec4 newfvec = texture2D(u_image1, newpos);
-              int newfv = buildInt(newfvec);
-
-              int acc = newfv - newdv;
-
-              if (acc > maxacc) {
-                maxacc = acc;
-                mpos = newpos;
-              }
-          }
-        }
-
-        return mpos;
-
-      }
-
-      vec2 pos_maxacc_289() {
-        vec2 mpos = u_mouse / u_resolution;
-        int maxacc = 0;
-        for (float i = -8.0; i <= 8.0; i += 1.0) {
-            for (float j = -8.0; j <= 8.0; j += 1.0) {
-              // Shader operations
-              vec2 delta = vec2(i, j);
-              vec2 newpos = (u_mouse + delta) / u_resolution ;
-
-              vec4 newdvec = texture2D(u_image0, newpos);
-              int newdv = buildInt(newdvec);
-
-              vec4 newfvec = texture2D(u_image1, newpos);
-              int newfv = buildInt(newfvec);
-
-              int acc = newfv - newdv;
-
-              if (acc > maxacc) {
-                maxacc = acc;
-                mpos = newpos;
-              }
-          }
-        }
-
-        return mpos;
-
-      }
-
-      vec2 get_mpos() {
-
-        if (u_isSnap <= 0.5) {
-          return u_mouse / u_resolution;
-        }
-
-        if (u_zoom >= 4.0) {
-          return u_mouse / u_resolution;
-        }
-
-        if (u_zoom >= 2.0) {
-          return pos_maxacc_9();
-        }
-
-        if (u_zoom >= 1.0) {
-          return pos_maxacc_25();
-        }
-
-        if (u_zoom >= 0.5) {
-          return pos_maxacc_81();
-        }
-
-        if (u_zoom <= 0.25) {
-          return pos_maxacc_289();
-        }
-
-        return u_mouse / u_resolution;
-      }
-
       void main() {
 
-        vec2 mpos = get_mpos();
+        vec2 mpos = u_mpos / u_resolution;
 
         vec4 dvec = texture2D(u_image0, mpos);
         vec4 fvec = texture2D(u_image1, mpos);
@@ -213,6 +73,13 @@
 
         gl_FragColor = texture2D(u_image2, v_texCoord);
 
+        // draw the loupe
+        vec2 ss = vec2(gl_FragCoord.x, u_resolution.y - gl_FragCoord.y);
+        float mdist = distance(floor(u_mouse) + vec2(0.5, 0.5), ss);
+        if (mdist < max(u_snap, 0.708)  && (mdist > u_snap - 1.41422 * 1.2 || mdist <= 0.4)) {
+          gl_FragColor *= vec4(0.2, 0.2, 0.2, 1.0);
+        }
+
         // trace downstream flow path
         if (d < dv && f >= fv) {
           // boost to yellow.
@@ -226,16 +93,13 @@
           // boost blue channel to pure blue so we can count it up.
           gl_FragColor += vec4(0.0, 0.0, 1.0, 0.0);
         }
-
-        // draw the loupe
-        vec2 ss = vec2(gl_FragCoord.x, u_resolution.y - gl_FragCoord.y);
-        float mdist = distance(floor(u_mouse) + vec2(0.5, 0.5), ss) * min(u_zoom, 1.0);
-        if (mdist < 1.41422 * 1.8 && (mdist > 1.41422 * 1.2 || mdist <= 0.6)) {
-          gl_FragColor *= vec4(0.2, 0.2, 0.2, 1.0);
-        }
       }
     </script>
     <style>
+      #area-units,
+      button {
+        font-family: sans-serif;
+      }
       #area-units div {
         margin: 0em 0.25em;
         width: 6ch;
@@ -248,11 +112,14 @@
         font-weight: bold;
       }
       #area-units div:has(input:checked),
-      button.checked {
+      #cycleSnap:not(.mode-none) {
         background-color: rgb(110, 180, 255);
         font-weight: bold;
         border: 2px solid;
         border-color: rgb(110, 180, 255);
+      }
+      #snapMode {
+        font-size: x-small;
       }
       #area-units input {
         display: none;
@@ -263,10 +130,6 @@
         width: 100%;
         font-size: small;
       }
-      #area-units,
-      button {
-        font-family: sans-serif;
-      }
       #nav-zoom button {
         border-radius: 0.5em;
         margin: 2px;
@@ -275,7 +138,7 @@
         margin: 3px;
       }
     </style>
-    <script type="module" crossorigin src="/demdag-web/assets/index-D5ycldIV.js"></script>
+    <script type="module" crossorigin src="/demdag-web/assets/index-BG7SNN58.js"></script>
   </head>
   <body>
     <div
@@ -306,13 +169,16 @@
             style="width: 3ch; font-weight: bold"
           ></span>
         </button>
-        <div id="zoom-buttons" style="display: flex; flex-direction: column">
+        <div
+          id="zoom-buttons"
+          style="display: flex; flex-direction: column; justify-content: center"
+        >
           <button onclick="adjustZoom(1)" style="width: 5ch">+</button>
           <button onclick="adjustZoom(-1)" style="width: 5ch">-</button>
         </div>
-        <button id="enableSnap" class="checked">Snap</button>
+        <button id="cycleSnap">Snap<br /><span id="snapMode"></span></button>
       </div>
-      <div id="area-units" style="display: flex; margin: 1rem"></div>
+      <div id="area-units" style="display: flex; margin: 1rem 0 1rem 0"></div>
       <div
         id="area-summary"
         style="
@@ -333,7 +199,7 @@
       </div>
       <div style="display: flex; width: 100%">
         <div style="margin: auto">
-          <canvas id="canvas" style="image-rendering: pixelated"></canvas>
+          <canvas id="canvas"></canvas>
         </div>
       </div>
     </div>
