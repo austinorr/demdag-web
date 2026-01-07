@@ -7,23 +7,50 @@ import discURL_LG from "./assets/helens_fdr_discovery.tif";
 import finiURL_LG from "./assets/helens_fdr_finish.tif";
 import bgURL_LG from "./assets/helens_bg.jpg";
 
-var images = [];
-var zoom = 1;
-var gl, program;
-var textures = [];
-var enableSnap = 1;
+const cycleSnapState = () => {
+  snapStateIx = (snapStateIx + 1) % snapStateOpt.length;
+  snapState = snapStateOpt[snapStateIx];
+  snapRadius = getSnapRadius();
+  return snapState;
+};
 
-var zooms = [0.25, 0.5, 1, 2, 4, 8, 16];
-var zix = 2;
+const getSnapRadius = () => {
+  switch (snapState) {
+    case "large":
+      return snapLarge;
+    case "none":
+      return 0;
+    default:
+      return zoom >= 8.0
+        ? 0
+        : zoom >= 4.0
+        ? 0
+        : zoom >= 2.0
+        ? 1
+        : zoom >= 1.0
+        ? 2
+        : zoom >= 0.5
+        ? 4
+        : zoom <= 0.25
+        ? 8
+        : 0;
+  }
+};
 
-var npixels = 0; // number of pixels in the delineation
-var showArea = false;
-const sqmeters_per_pixel = 100; //
-var from_sqm_conversion_factor = 1; //
+const locateHUD = () => {
+  console.debug("locating hud");
+  let c = document.getElementById("canvas").getBoundingClientRect();
+  area_summary.style.top = c.top + 15 + "px";
+  area_summary.style.left = c.left + 15 + "px";
+  if (c.top < 0) {
+    area_summary.style.top = "15px";
+  }
+  if (c.left < 0) {
+    area_summary.style.left = "15px";
+  }
+};
 
-const area_summary = document.getElementById("area-summary");
-
-function _setZoom(zoom) {
+const _setZoom = (zoom) => {
   console.debug("zoom: ", zoom);
   let canvas = document.getElementById("canvas");
   canvas.style.width = `${gl.canvas.width * zoom}px`;
@@ -31,9 +58,9 @@ function _setZoom(zoom) {
   let z = document.getElementById("zoom");
   z.innerHTML = zoom;
   locateHUD();
-}
+};
 
-function adjustZoom(inc) {
+const adjustZoom = (inc) => {
   let newZix = zix + inc;
 
   if (newZix < 0) {
@@ -45,41 +72,47 @@ function adjustZoom(inc) {
   zix = newZix;
   zoom = zooms[zix];
   _setZoom(zoom);
-}
+  updateSnapState();
+};
 
-function loadImage(url, callback) {
-  const img = new Image();
-  img.crossOrigin = "Anonymous"; // to avoid CORS if used with Canvas
-  img.src = url;
-  img.onload = callback;
-  return img;
-}
+const loadImage = (url) => {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = "Anonymous"; // to avoid CORS if used with Canvas
 
-let tiffCache = {};
-async function loadTiff(url) {
+    // Set up the load and error event handlers before setting the src
+    // to avoid a race condition if the image loads very quickly.
+    img.onload = () => resolve(img);
+    img.onerror = (error) => reject(error);
+
+    // Set the source to start loading the image.
+    img.src = url;
+  });
+};
+
+const loadTiff = async (url) => {
   if (!tiffCache?.[url]) {
     let image;
     console.debug("fetching:", url);
     const response = await fetch(url);
 
     const arrayBuffer = await response.arrayBuffer();
-    // console.log(arrayBuffer);
     const tiff = await fromArrayBuffer(arrayBuffer);
     const imageTiff = await tiff.getImage();
     const width = imageTiff.getWidth();
     const height = imageTiff.getHeight();
 
     if (url.includes("_discovery") || url.includes("_finish")) {
-      const geoTiffDataRGB = await imageTiff.readRasters();
-      // console.log("geoTiffDataRGB: ", geoTiffDataRGB[0]);
-      const dataInt8 = new Uint8ClampedArray(geoTiffDataRGB[0].length * 4); // array of RGBA values
+      const geoTiffDataBands = await imageTiff.readRasters();
+      const geoTiffData = geoTiffDataBands[0];
+      const dataInt8 = new Uint8ClampedArray(geoTiffData.length * 4); // array of RGBA values
 
       // convert GeoTiff's RGB values to ImageData's RGBA values
       for (let i = 0; i < height; i++) {
         for (let j = 0; j < width; j++) {
           const srcIdx = i * width + j;
           const idx = 4 * i * width + 4 * j;
-          const int32 = geoTiffDataRGB[0][srcIdx];
+          const int32 = geoTiffData[srcIdx];
           dataInt8[idx] = int32 & 0xff;
           dataInt8[idx + 1] = (int32 >> 8) & 0xff;
           dataInt8[idx + 2] = (int32 >> 16) & 0xff;
@@ -91,6 +124,7 @@ async function loadTiff(url) {
         data: dataInt8,
         width,
         height,
+        _raw_data: geoTiffData,
       };
 
       console.debug("data: ", data, url);
@@ -126,56 +160,71 @@ async function loadTiff(url) {
   }
 
   return tiffCache[url];
-}
+};
 
-async function loadImages(urls, callback) {
-  var imagesToLoad = urls.length;
+const imLoad = async (url) => {
+  if (url.endsWith(".tif") || url.endsWith(".tiff")) {
+    return loadTiff(url);
+  } else {
+    return loadImage(url);
+  }
+};
+
+const loadImages = async (urls, callback) => {
   images = [];
-
-  // Called each time an image finished
-  // loading.
-  var onImageLoad = function () {
-    --imagesToLoad;
-    // If all the images are loaded call the callback.
-    console.debug("loaded img.");
-    if (imagesToLoad === 0) {
-      console.debug("images:", images);
-      callback(images);
-    }
-  };
   console.debug("urls:", urls);
+  Promise.all(urls.map(imLoad)).then((imgs) => {
+    images = imgs;
+    callback(images);
+  });
+};
 
-  for (var ii = 0; ii < urls.length; ++ii) {
-    const url = urls[ii];
-    console.debug("loading: ", url);
-    let image;
-    if (url.endsWith(".tif") || url.endsWith(".tiff")) {
-      image = await loadTiff(url);
-      images.push(image);
-      onImageLoad();
-    } else {
-      image = await loadImage(url, onImageLoad);
-      images.push(image);
+const getSquaredDistance = (x1, y1, x2, y2) => {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  return dx * dx + dy * dy;
+};
+
+const snapToMaxAcc = () => {
+  let mpos = mousePos;
+  let snap = snapRadius;
+  let snap2 = snap * snap;
+
+  if ((snap > 0) & (images.length >= 3)) {
+    let pctx = mousePos.x / gl.canvas.width;
+    let pcty = mousePos.y / gl.canvas.height;
+    let im = images[0];
+    let col = Math.floor(im.width * pctx);
+    let row = Math.floor(im.height * pcty);
+
+    let maxacc = 0;
+
+    for (let i = -snap; i <= snap; i++) {
+      let c = Math.min(im.width, Math.max(0, col + i));
+      for (let j = -snap; j <= snap; j++) {
+        let r = Math.min(im.height, Math.max(0, row + j));
+
+        if (getSquaredDistance(col, row, c, r) <= snap2) {
+          const srcIdx = r * im.width + c;
+          const acc =
+            1 + images[1]._raw_data[srcIdx] - images[0]._raw_data[srcIdx];
+          if (acc > maxacc) {
+            maxacc = acc;
+            mpos = { x: c, y: r };
+          }
+        }
+      }
     }
   }
-}
+  return mpos;
+};
 
-function render() {
-  try {
-    _renderThrottle();
-  } catch (e) {
-    console.error(e);
-  }
-}
-
-const _renderThrottle = throttle(_render, 1000 / 60);
-
-function _render() {
+const _render = () => {
   if (!(images.length > 0) || !(images[0]?.width > 0)) {
     return;
   }
   // Create a buffer to put three 2d clip space points in
-  var positionBuffer = gl.createBuffer();
+  let positionBuffer = gl.createBuffer();
 
   // Bind it to ARRAY_BUFFER (think of it as ARRAY_BUFFER = positionBuffer)
   gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
@@ -183,11 +232,11 @@ function _render() {
   setRectangle(gl, 0, 0, images[0].width, images[0].height);
 
   // look up where the vertex data needs to go.
-  var positionLocation = gl.getAttribLocation(program, "a_position");
-  var texcoordLocation = gl.getAttribLocation(program, "a_texCoord");
+  let positionLocation = gl.getAttribLocation(program, "a_position");
+  let texcoordLocation = gl.getAttribLocation(program, "a_texCoord");
 
   // provide texture coordinates for the rectangle.
-  var texcoordBuffer = gl.createBuffer();
+  let texcoordBuffer = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, texcoordBuffer);
   gl.bufferData(
     gl.ARRAY_BUFFER,
@@ -198,15 +247,16 @@ function _render() {
   );
 
   // lookup uniforms
-  var resolutionLocation = gl.getUniformLocation(program, "u_resolution");
-  var mouseLocation = gl.getUniformLocation(program, "u_mouse");
-  var uzoom = gl.getUniformLocation(program, "u_zoom");
-  var isSnap = gl.getUniformLocation(program, "u_isSnap");
+  let resolutionLocation = gl.getUniformLocation(program, "u_resolution");
+  let mouseLocation = gl.getUniformLocation(program, "u_mouse");
+  let umpos = gl.getUniformLocation(program, "u_mpos");
+  let uzoom = gl.getUniformLocation(program, "u_zoom");
+  let usnap = gl.getUniformLocation(program, "u_snap");
 
   // lookup the sampler locations.
-  var u_image0Location = gl.getUniformLocation(program, "u_image0");
-  var u_image1Location = gl.getUniformLocation(program, "u_image1");
-  var u_image2Location = gl.getUniformLocation(program, "u_image2");
+  let u_image0Location = gl.getUniformLocation(program, "u_image0");
+  let u_image1Location = gl.getUniformLocation(program, "u_image1");
+  let u_image2Location = gl.getUniformLocation(program, "u_image2");
 
   // Tell it to use our program (pair of shaders)
   gl.useProgram(program);
@@ -218,18 +268,13 @@ function _render() {
   gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
 
   // Tell the position attribute how to get data out of positionBuffer (ARRAY_BUFFER)
-  var size = 2; // 2 components per iteration
-  var type = gl.FLOAT; // the data is 32bit floats
-  var normalize = false; // don't normalize the data
-  var stride = 0; // 0 = move forward size * sizeof(type) each iteration to get the next position
-  var offset = 0; // start at the beginning of the buffer
   gl.vertexAttribPointer(
     positionLocation,
-    size,
-    type,
-    normalize,
-    stride,
-    offset
+    2, // 2 components per iteration
+    gl.FLOAT, // the data is 32bit floats
+    false, // don't normalize the data
+    0, // 0 = move forward size * sizeof(type) each iteration to get the next position
+    0 // start at the beginning of the buffer
   );
 
   // Turn on the texcoord attribute
@@ -239,25 +284,25 @@ function _render() {
   gl.bindBuffer(gl.ARRAY_BUFFER, texcoordBuffer);
 
   // Tell the texcoord attribute how to get data out of texcoordBuffer (ARRAY_BUFFER)
-  var size = 2; // 2 components per iteration
-  var type = gl.FLOAT; // the data is 32bit floats
-  var normalize = false; // don't normalize the data
-  var stride = 0; // 0 = move forward size * sizeof(type) each iteration to get the next position
-  var offset = 0; // start at the beginning of the buffer
   gl.vertexAttribPointer(
     texcoordLocation,
-    size,
-    type,
-    normalize,
-    stride,
-    offset
+    2, // 2 components per iteration
+    gl.FLOAT, // the data is 32bit floats
+    false, // don't normalize the data
+    0, // 0 = move forward size * sizeof(type) each iteration to get the next position
+    0 // start at the beginning of the buffer
   );
+
+  if (!pinMax) {
+    mpos = snapToMaxAcc();
+  }
 
   // set the resolution
   gl.uniform2f(resolutionLocation, gl.canvas.width, gl.canvas.height);
   gl.uniform2f(mouseLocation, mousePos.x, mousePos.y);
+  gl.uniform2f(umpos, mpos.x, mpos.y);
   gl.uniform1f(uzoom, zoom);
-  gl.uniform1f(isSnap, enableSnap);
+  gl.uniform1f(usnap, snapRadius);
 
   // set which texture units to render with.
   gl.uniform1i(u_image0Location, 0); // texture unit 0
@@ -267,8 +312,10 @@ function _render() {
   // Set each texture unit to use a particular texture.
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, textures[0]);
+
   gl.activeTexture(gl.TEXTURE1);
   gl.bindTexture(gl.TEXTURE_2D, textures[1]);
+
   gl.activeTexture(gl.TEXTURE2);
   gl.bindTexture(gl.TEXTURE_2D, textures[2]);
 
@@ -277,17 +324,24 @@ function _render() {
     readPixels();
   }
   gl.finish();
-}
+};
 
-function readPixels() {
+const render = () => {
+  try {
+    _render();
+  } catch (e) {
+    console.error(e);
+  }
+};
+
+const readPixels = () => {
+  // the pixels with blue channel set to 255 are 'in' the watershed.
+  // this will add them up and render the result to the page.
+  let w_size = 0;
   const width = gl.canvas.width;
   const height = gl.canvas.height;
   const pixels = new Uint8Array(width * height * 4); // 4 for RGBA
   gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-
-  // the pixels with blue channel set to 255 are 'in' the watershed.
-  // this will add them up and render the result to the page.
-  let w_size = 0;
 
   for (let i = 0; i < height; i++) {
     for (let j = 0; j < width; j++) {
@@ -299,9 +353,9 @@ function readPixels() {
     }
   }
   npixels = w_size;
-}
+};
 
-function initGL(images) {
+const initGL = (images) => {
   // Get A WebGL context
   /** @type {HTMLCanvasElement} */
 
@@ -309,7 +363,8 @@ function initGL(images) {
     console.error("No Images!");
     return;
   }
-  var canvas = document.getElementById("canvas");
+  let canvas = document.getElementById("canvas");
+  canvas.style["image-rendering"] = "pixelated";
   gl = canvas.getContext("webgl", { antialias: false });
   if (!gl) {
     console.error("Cannot attach as webgl canvas to the document!");
@@ -372,7 +427,7 @@ function initGL(images) {
     shaders.push(shader);
   }
   program = gl.createProgram();
-  shaders.forEach(function (shader) {
+  shaders.forEach((shader) => {
     gl.attachShader(program, shader);
   });
   gl.linkProgram(program);
@@ -395,9 +450,9 @@ function initGL(images) {
 
   // create textures
   textures = [];
-  for (var ii = 0; ii < images.length; ++ii) {
+  for (let ii = 0; ii < images.length; ++ii) {
     // console.log("texture: ", ii, images[ii]);
-    var texture = gl.createTexture();
+    let texture = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, texture);
 
     // Set the parameters so we can render any size image.
@@ -451,65 +506,44 @@ function initGL(images) {
 
   render();
   _setZoom(zoom);
-}
+};
 
-function setRectangle(gl, x, y, width, height) {
-  var x1 = x;
-  var x2 = x + width;
-  var y1 = y;
-  var y2 = y + height;
+const setRectangle = (gl, x, y, width, height) => {
+  let x1 = x;
+  let x2 = x + width;
+  let y1 = y;
+  let y2 = y + height;
   gl.bufferData(
     gl.ARRAY_BUFFER,
     new Float32Array([x1, y1, x2, y1, x1, y2, x1, y2, x2, y1, x2, y2]),
     gl.STATIC_DRAW
   );
-}
+};
 
-var mousePos = { x: 1e6, y: 1e6 };
-
-function getRelativeMousePosition(event, target) {
+const getRelativeMousePosition = (event, target) => {
   target = target || event.target;
-  var rect = target.getBoundingClientRect();
+  const { left, top } = target.getBoundingClientRect();
 
   return {
-    x: event.clientX - rect.left,
-    y: event.clientY - rect.top,
+    x: event.clientX - left,
+    y: event.clientY - top,
   };
-}
-
-function _debounce(callback, wait) {
-  var timeout;
-  return function (e) {
-    clearTimeout(timeout);
-
-    timeout = setTimeout(() => {
-      callback(e);
-    }, wait);
-  };
-}
-
-function throttle(callback, wait) {
-  var timeout;
-  return function (e) {
-    if (timeout) return;
-    timeout = setTimeout(() => (callback(e), (timeout = undefined)), wait);
-  };
-}
+};
 
 // assumes target or event.target is canvas
-function getNoPaddingNoBorderCanvasRelativeMousePosition(event, target) {
+const getNoPaddingNoBorderCanvasRelativeMousePosition = (event, target) => {
   target = target || event.target;
-  var pos = getRelativeMousePosition(event, target);
+  let { x, y } = getRelativeMousePosition(event, target);
 
-  pos.x = (pos.x * target.width) / target.clientWidth;
-  pos.y = (pos.y * target.height) / target.clientHeight;
+  x = (x * target.width) / target.clientWidth;
+  y = (y * target.height) / target.clientHeight;
 
-  return pos;
-}
+  return { x, y };
+};
 
-const mobileAndTabletCheck = function () {
+const mobileAndTabletCheck = () => {
   let check = false;
-  (function (a) {
+  ((a) => {
     if (
       /(android|bb\d+|meego).+mobile|avantgo|bada\/|blackberry|blazer|compal|elaine|fennec|hiptop|iemobile|ip(hone|od)|iris|kindle|lge |maemo|midp|mmp|mobile.+firefox|netfront|opera m(ob|in)i|palm( os)?|phone|p(ixi|re)\/|plucker|pocket|psp|series(4|6)0|symbian|treo|up\.(browser|link)|vodafone|wap|windows ce|xda|xiino|android|ipad|playbook|silk/i.test(
         a
@@ -523,7 +557,7 @@ const mobileAndTabletCheck = function () {
   return check;
 };
 
-function isTouchDevice() {
+const isTouchDevice = () => {
   try {
     //We try to create TouchEvent. It would fail for desktops and throw error
     document.createEvent("TouchEvent");
@@ -531,14 +565,11 @@ function isTouchDevice() {
   } catch (e) {
     return false;
   }
-}
+};
 
-const isMobile = isTouchDevice() || mobileAndTabletCheck();
-
-let touchCount = 0;
 document.querySelector("#canvas").addEventListener(
   "touchstart",
-  function (event) {
+  (event) => {
     touchCount++;
     if (event.touches.length === 1 && touchCount === 1) {
       event.preventDefault();
@@ -546,17 +577,20 @@ document.querySelector("#canvas").addEventListener(
   },
   { passive: false }
 );
-document
-  .querySelector("#canvas")
-  .addEventListener("touchend", function (event) {
-    touchCount = 0;
-  });
+
+document.querySelector("#canvas").addEventListener("touchend", (event) => {
+  touchCount = 0;
+});
+
+document.querySelector("#canvas").addEventListener("click", () => {
+  pinMax = !pinMax;
+});
 
 const onMove = (e) => {
-  const pos = getNoPaddingNoBorderCanvasRelativeMousePosition(e);
+  const { x, y } = getNoPaddingNoBorderCanvasRelativeMousePosition(e);
   const mobileOffset = (isMobile * 50) / zoom;
-  mousePos.x = pos.x;
-  mousePos.y = pos.y - mobileOffset;
+  mousePos.x = x;
+  mousePos.y = y - mobileOffset;
   console.debug("mousePos", mousePos);
   render();
 
@@ -567,21 +601,22 @@ const onMove = (e) => {
 };
 
 document.querySelector("#canvas").addEventListener("pointermove", onMove);
-document.addEventListener("scroll", locateHUD);
+window.addEventListener("scroll", locateHUD);
+window.addEventListener("resize", locateHUD);
 
-async function mainSM() {
+const mainSM = async () => {
   zix = 3;
   zoom = zooms[zix];
   await loadImages([discURL, finiURL, bgURL], initGL);
-}
+};
 
-async function mainLG() {
+const mainLG = async () => {
   zix = 0;
   zoom = zooms[zix];
   await loadImages([discURL_LG, finiURL_LG, bgURL_LG], initGL);
-}
+};
 
-async function main(example) {
+const main = async (example) => {
   if (!example) {
     const urlParams = new URLSearchParams(window.location.search);
     example = urlParams.get("example");
@@ -595,15 +630,18 @@ async function main(example) {
     mainSM();
   }
   locateHUD();
-}
+  updateSnapState();
+};
 
-function changeUnits(factor) {
-  from_sqm_conversion_factor = factor;
-  updateArea();
+const changeUnits = (id) => {
+  selectedUnit = units.find((u) => u.id === id);
+  from_sqm_conversion_factor = selectedUnit.from_sqm;
   maybeShowAreaSummary();
-}
+  render();
+  updateArea();
+};
 
-function maybeShowAreaSummary() {
+const maybeShowAreaSummary = () => {
   if (!from_sqm_conversion_factor) {
     showArea = false;
     area_summary.style.display = "none";
@@ -611,7 +649,7 @@ function maybeShowAreaSummary() {
     showArea = true;
     area_summary.style.display = "";
   }
-}
+};
 
 document
   .querySelector("#canvas")
@@ -621,27 +659,84 @@ document.querySelector("#canvas").addEventListener("mouseexit", () => {
   area_summary.style.display = "none";
 });
 
-function locateHUD() {
-  console.debug("locating hud");
-  let c = document.getElementById("canvas").getBoundingClientRect();
-  area_summary.style.top = c.top + 15 + "px";
-  area_summary.style.left = c.left + 15 + "px";
-  if (c.top < 0) {
-    area_summary.style.top = "15px";
-  }
-  if (c.left < 0) {
-    area_summary.style.left = "15px";
-  }
-}
-
-function updateArea() {
-  let area = npixels * sqmeters_per_pixel * from_sqm_conversion_factor;
+const updateArea = () => {
+  let u = selectedUnit;
+  let area = npixels * sqmeters_per_pixel * u.from_sqm;
   let area_str = area.toLocaleString(undefined, { maximumFractionDigits: 1 });
 
   let area_value = document.getElementById("area_value");
-  area_value.innerText = area_str;
-}
+  area_value.innerText = `${area_str} ${u.label}`;
+};
 
+const createAreaButtons = () => {
+  let buttonContainer = document.getElementById("area-units");
+  let inputHtml = buttonContainer.innerHTML;
+
+  for (const u of units) {
+    inputHtml += `
+    <div>
+      <input type="radio" id="units-${u.id}" name="units" value="${u.id}" onChange=changeUnits("${u.id}")>
+      <label for="units-${u.id}" >${u.label}</label>
+    </div>
+    `;
+  }
+
+  buttonContainer.innerHTML = inputHtml;
+  let u = selectedUnit;
+  let defaultUnits = document.querySelector(`input[id='units-${u.id}']`);
+  defaultUnits.checked = true;
+  changeUnits(u.id);
+};
+
+const updateSnapState = () => {
+  snapRadius = getSnapRadius();
+  let buttonMode = document.getElementById("snapMode");
+  buttonMode.innerHTML = `mode: ${snapState}</br>radius: ${snapRadius}`;
+};
+
+const createSnapToggle = () => {
+  let button = document.getElementById("cycleSnap");
+  button.classList.add(`mode-${snapState}`);
+  updateSnapState();
+
+  button.addEventListener("click", () => {
+    button.classList.remove(`mode-${snapState}`);
+    cycleSnapState();
+    button.classList.add(`mode-${snapState}`);
+    updateSnapState();
+  });
+};
+
+window.main = main;
+window.adjustZoom = adjustZoom;
+window.changeUnits = changeUnits;
+
+var gl, program;
+var images = [];
+var textures = [];
+var zoom = 1;
+var zooms = [0.25, 0.5, 1, 2, 4, 8, 16];
+var zix = 2;
+
+var snapStateOpt = ["zoom", "large", "none"];
+var snapLarge = 40;
+var snapStateIx = 0;
+var snapState = snapStateOpt[snapStateIx];
+var snapRadius = getSnapRadius();
+
+var npixels = 0; // number of pixels in the delineation
+var showArea = false;
+var pinMax = false;
+const sqmeters_per_pixel = 100; //
+var from_sqm_conversion_factor = 1; //
+
+var tiffCache = {};
+
+var area_summary = document.getElementById("area-summary");
+var mousePos = { x: 1e6, y: 1e6 };
+var mpos = mousePos;
+const isMobile = isTouchDevice() || mobileAndTabletCheck();
+var touchCount = 0;
 const units = [
   { id: "acres", label: "Acres", from_sqm: 1 / 4046.86 },
   { id: "sqmi", label: "Sq Mi", from_sqm: 1 / 2589988.110336 },
@@ -650,40 +745,7 @@ const units = [
   { id: "pixels", label: "Pixels", from_sqm: 1 / 100 },
   { id: "none", label: "None", from_sqm: 0 },
 ];
-
-function createAreaButtons() {
-  let buttonContainer = document.getElementById("area-units");
-  let inputHtml = buttonContainer.innerHTML;
-
-  for (const u of units) {
-    inputHtml += `
-    <div>
-      <input type="radio" id="units-${u.id}" name="units" value="${u.id}" onChange=changeUnits(${u.from_sqm})>
-      <label for="units-${u.id}" >${u.label}</label>
-    </div>
-    `;
-  }
-
-  buttonContainer.innerHTML = inputHtml;
-  let u = units.at(-1);
-  let defaultUnits = document.querySelector(`input[id='units-${u.id}']`);
-  defaultUnits.checked = true;
-  changeUnits(u.from_sqm);
-}
-
-function createSnapToggle() {
-  let button = document.getElementById("enableSnap");
-  button.classList.toggle("checked", enableSnap);
-
-  button.addEventListener("click", function () {
-    enableSnap = 1 - enableSnap;
-    button.classList.toggle("checked", enableSnap);
-  });
-}
-
-window.main = main;
-window.adjustZoom = adjustZoom;
-window.changeUnits = changeUnits;
+var selectedUnit = units.at(-1);
 
 createAreaButtons();
 createSnapToggle();
