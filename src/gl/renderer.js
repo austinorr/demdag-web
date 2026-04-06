@@ -77,7 +77,7 @@ export const render = (gl, program, textures, images, state) => {
   // Update dynamic uniforms
   gl.uniform2f(resolutionLocation, gl.canvas.width, gl.canvas.height);
   gl.uniform2f(mouseLocation, state.mousePos.x, state.mousePos.y);
-  gl.uniform2i(mposLocation, Math.round(state.mpos.x), Math.round(state.mpos.y));
+  gl.uniform2i(mposLocation, Math.floor(state.mpos.x), Math.floor(state.mpos.y));
   gl.uniform1f(zoomLocation, state.zoom);
   gl.uniform1f(snapLocation, state.snapRadius);
 
