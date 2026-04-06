@@ -2,7 +2,7 @@ import { datasets, units, sqmeters_per_pixel } from "./data/datasets.js";
 import { loadImages } from "./data/loader.js";
 import { createContext, createProgram } from "./gl/context.js";
 import { createTextures } from "./gl/textures.js";
-import { render } from "./gl/renderer.js";
+import { render, setupBuffers } from "./gl/renderer.js";
 import { locateHUD } from "./ui/hud.js";
 import {
   setZoom,
@@ -253,8 +253,6 @@ const initGL = (images) => {
   state.program = createProgram(state.gl);
   if (!state.program) return;
 
-  state.gl.useProgram(state.program);
-
   state.images = images;
   state.textures = createTextures(state.gl, images);
 
@@ -270,6 +268,8 @@ const initGL = (images) => {
   state.gl.canvas.width = w;
   state.gl.canvas.height = h;
   state.gl.viewport(0, 0, state.gl.canvas.width, state.gl.canvas.height);
+
+  setupBuffers(state.gl, state.program, w, h);
 
   doRender();
   setZoom(state.gl, state.zoom);

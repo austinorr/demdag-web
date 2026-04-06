@@ -10,27 +10,41 @@ export const createTextures = (gl, images) => {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
 
-    // Upload the image into the texture.
-    if (images[ii]?.data) {
+    if (images[ii]?._raw_data) {
+      // Integer texture — upload raw Int32Array directly as R32I
       gl.texImage2D(
         gl.TEXTURE_2D,
-        0, // mip level
-        gl.RGBA, // internal format
-        images[ii].width, // width
-        images[ii].height, // height
-        0, // border
-        gl.RGBA, // source format
-        gl.UNSIGNED_BYTE, // source type
-        images[ii].data
+        0,
+        gl.R32I,
+        images[ii].width,
+        images[ii].height,
+        0,
+        gl.RED_INTEGER,
+        gl.INT,
+        images[ii]._raw_data,
+      );
+    } else if (images[ii]?.data) {
+      // RGBA Uint8 data (e.g. ImageData)
+      gl.texImage2D(
+        gl.TEXTURE_2D,
+        0,
+        gl.RGBA,
+        images[ii].width,
+        images[ii].height,
+        0,
+        gl.RGBA,
+        gl.UNSIGNED_BYTE,
+        images[ii].data,
       );
     } else {
+      // HTMLImageElement / ImageBitmap
       gl.texImage2D(
         gl.TEXTURE_2D,
         0,
         gl.RGBA,
         gl.RGBA,
         gl.UNSIGNED_BYTE,
-        images[ii]
+        images[ii],
       );
     }
 

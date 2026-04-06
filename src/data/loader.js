@@ -32,31 +32,20 @@ export const loadTiff = async (url) => {
     if (url.includes("_discovery") || url.includes("_finish")) {
       const geoTiffDataBands = await imageTiff.readRasters();
       const geoTiffData = geoTiffDataBands[0];
-      const dataInt8 = new Uint8ClampedArray(geoTiffData.length * 4); // array of RGBA values
 
-      // convert GeoTiff's RGB values to ImageData's RGBA values
-      for (let i = 0; i < height; i++) {
-        for (let j = 0; j < width; j++) {
-          const srcIdx = i * width + j;
-          const idx = 4 * i * width + 4 * j;
-          const int32 = geoTiffData[srcIdx];
-          dataInt8[idx] = int32 & 0xff;
-          dataInt8[idx + 1] = (int32 >> 8) & 0xff;
-          dataInt8[idx + 2] = (int32 >> 16) & 0xff;
-          dataInt8[idx + 3] = (int32 >> 24) & 0xff;
-        }
-      }
+      // Pass raw Int32Array directly — uploaded as R32I integer texture in WebGL 2
+      const rawInt32 =
+        geoTiffData instanceof Int32Array
+          ? geoTiffData
+          : new Int32Array(geoTiffData.buffer, geoTiffData.byteOffset, geoTiffData.length);
 
-      const data = {
-        data: dataInt8,
+      image = {
         width,
         height,
-        _raw_data: geoTiffData,
+        _raw_data: rawInt32,
       };
 
-      console.debug("data: ", data, url);
-
-      image = data;
+      console.debug("data: ", image, url);
     } else {
       const geoTiffDataRGB = await imageTiff.readRGB();
 

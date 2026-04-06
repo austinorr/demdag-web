@@ -1,93 +1,87 @@
-import { setRectangle } from "./buffers.js";
 import { readPixels } from "./readback.js";
+
+// Static GL resources — created once in setupBuffers(), reused every frame
+let positionBuffer = null;
+let texcoordBuffer = null;
+let positionLocation = -1;
+let texcoordLocation = -1;
+let resolutionLocation = null;
+let mouseLocation = null;
+let mposLocation = null;
+let zoomLocation = null;
+let snapLocation = null;
+let image0Location = null;
+let image1Location = null;
+let image2Location = null;
+
+export const setupBuffers = (gl, program, imageWidth, imageHeight) => {
+  gl.useProgram(program);
+
+  // Position buffer — rectangle the same size as the image
+  positionBuffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+  const x2 = imageWidth;
+  const y2 = imageHeight;
+  gl.bufferData(
+    gl.ARRAY_BUFFER,
+    new Float32Array([0, 0, x2, 0, 0, y2, 0, y2, x2, 0, x2, y2]),
+    gl.STATIC_DRAW,
+  );
+
+  // Texcoord buffer
+  texcoordBuffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, texcoordBuffer);
+  gl.bufferData(
+    gl.ARRAY_BUFFER,
+    new Float32Array([0, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 1]),
+    gl.STATIC_DRAW,
+  );
+
+  // Attribute locations
+  positionLocation = gl.getAttribLocation(program, "a_position");
+  texcoordLocation = gl.getAttribLocation(program, "a_texCoord");
+
+  // Uniform locations
+  resolutionLocation = gl.getUniformLocation(program, "u_resolution");
+  mouseLocation = gl.getUniformLocation(program, "u_mouse");
+  mposLocation = gl.getUniformLocation(program, "u_mpos");
+  zoomLocation = gl.getUniformLocation(program, "u_zoom");
+  snapLocation = gl.getUniformLocation(program, "u_snap");
+  image0Location = gl.getUniformLocation(program, "u_image0");
+  image1Location = gl.getUniformLocation(program, "u_image1");
+  image2Location = gl.getUniformLocation(program, "u_image2");
+
+  // Static sampler bindings (texture units never change)
+  gl.uniform1i(image0Location, 0);
+  gl.uniform1i(image1Location, 1);
+  gl.uniform1i(image2Location, 2);
+};
 
 export const render = (gl, program, textures, images, state) => {
   if (!(images.length > 0) || !(images[0]?.width > 0)) {
     return;
   }
-  // Create a buffer to put three 2d clip space points in
-  let positionBuffer = gl.createBuffer();
 
-  // Bind it to ARRAY_BUFFER (think of it as ARRAY_BUFFER = positionBuffer)
-  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-  // Set a rectangle the same size as the image.
-  setRectangle(gl, 0, 0, images[0].width, images[0].height);
-
-  // look up where the vertex data needs to go.
-  let positionLocation = gl.getAttribLocation(program, "a_position");
-  let texcoordLocation = gl.getAttribLocation(program, "a_texCoord");
-
-  // provide texture coordinates for the rectangle.
-  let texcoordBuffer = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, texcoordBuffer);
-  gl.bufferData(
-    gl.ARRAY_BUFFER,
-    new Float32Array([
-      0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0,
-    ]),
-    gl.STATIC_DRAW,
-  );
-
-  // lookup uniforms
-  let resolutionLocation = gl.getUniformLocation(program, "u_resolution");
-  let mouseLocation = gl.getUniformLocation(program, "u_mouse");
-  let umpos = gl.getUniformLocation(program, "u_mpos");
-  let uzoom = gl.getUniformLocation(program, "u_zoom");
-  let usnap = gl.getUniformLocation(program, "u_snap");
-
-  // lookup the sampler locations.
-  let u_image0Location = gl.getUniformLocation(program, "u_image0");
-  let u_image1Location = gl.getUniformLocation(program, "u_image1");
-  let u_image2Location = gl.getUniformLocation(program, "u_image2");
-
-  // Tell it to use our program (pair of shaders)
   gl.useProgram(program);
 
-  // Turn on the position attribute
+  // Bind position buffer and attribute
   gl.enableVertexAttribArray(positionLocation);
-
-  // Bind the position buffer.
   gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+  gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
 
-  // Tell the position attribute how to get data out of positionBuffer (ARRAY_BUFFER)
-  gl.vertexAttribPointer(
-    positionLocation,
-    2, // 2 components per iteration
-    gl.FLOAT, // the data is 32bit floats
-    false, // don't normalize the data
-    0, // 0 = move forward size * sizeof(type) each iteration to get the next position
-    0, // start at the beginning of the buffer
-  );
-
-  // Turn on the texcoord attribute
+  // Bind texcoord buffer and attribute
   gl.enableVertexAttribArray(texcoordLocation);
-
-  // bind the texcoord buffer.
   gl.bindBuffer(gl.ARRAY_BUFFER, texcoordBuffer);
+  gl.vertexAttribPointer(texcoordLocation, 2, gl.FLOAT, false, 0, 0);
 
-  // Tell the texcoord attribute how to get data out of texcoordBuffer (ARRAY_BUFFER)
-  gl.vertexAttribPointer(
-    texcoordLocation,
-    2, // 2 components per iteration
-    gl.FLOAT, // the data is 32bit floats
-    false, // don't normalize the data
-    0, // 0 = move forward size * sizeof(type) each iteration to get the next position
-    0, // start at the beginning of the buffer
-  );
-
-  // set the resolution
+  // Update dynamic uniforms
   gl.uniform2f(resolutionLocation, gl.canvas.width, gl.canvas.height);
   gl.uniform2f(mouseLocation, state.mousePos.x, state.mousePos.y);
-  gl.uniform2f(umpos, state.mpos.x, state.mpos.y);
-  gl.uniform1f(uzoom, state.zoom);
-  gl.uniform1f(usnap, state.snapRadius);
+  gl.uniform2i(mposLocation, Math.round(state.mpos.x), Math.round(state.mpos.y));
+  gl.uniform1f(zoomLocation, state.zoom);
+  gl.uniform1f(snapLocation, state.snapRadius);
 
-  // set which texture units to render with.
-  gl.uniform1i(u_image0Location, 0); // texture unit 0
-  gl.uniform1i(u_image1Location, 1); // texture unit 1
-  gl.uniform1i(u_image2Location, 2); // texture unit 2
-
-  // Set each texture unit to use a particular texture.
+  // Bind textures
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, textures[0]);
 
