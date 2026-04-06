@@ -101,5 +101,4 @@ export const render = (gl, program, textures, images, state) => {
   if (state.showArea) {
     state.npixels = readPixels(gl);
   }
-  gl.finish();
 };

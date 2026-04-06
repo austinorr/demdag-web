@@ -315,24 +315,34 @@ document.querySelector("#canvas").addEventListener("click", () => {
   state.pinMax = !state.pinMax;
 });
 
+let rafPending = false;
+
 const onMove = (e) => {
   const { x, y } = getNoPaddingNoBorderCanvasRelativeMousePosition(e);
   const mobileOffset = (isMobile * 50) / state.zoom;
   state.mousePos.x = x;
   state.mousePos.y = y - mobileOffset;
+
   if (perfEnabled && !firstInputInBurst) {
     firstInputInBurst = performance.now();
-    requestAnimationFrame(() => {
-      latencySum += performance.now() - firstInputInBurst;
-      latencyCount++;
-      firstInputInBurst = 0;
-    });
   }
-  console.debug("mousePos", state.mousePos);
-  doRender();
 
-  if (state.showArea) {
-    updateArea(state);
+  if (!rafPending) {
+    rafPending = true;
+    requestAnimationFrame(() => {
+      rafPending = false;
+
+      if (perfEnabled && firstInputInBurst) {
+        latencySum += performance.now() - firstInputInBurst;
+        latencyCount++;
+        firstInputInBurst = 0;
+      }
+
+      doRender();
+      if (state.showArea) {
+        updateArea(state);
+      }
+    });
   }
 };
 
