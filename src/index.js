@@ -58,17 +58,17 @@ const getSnapRadius = () => {
       return 0;
     default:
       return state.zoom >= 8.0
-        ? 0
+        ? 1
         : state.zoom >= 4.0
-          ? 0
+          ? 1
           : state.zoom >= 2.0
-            ? 1
+            ? 2
             : state.zoom >= 1.0
-              ? 2
+              ? 4
               : state.zoom >= 0.5
-                ? 4
+                ? 8
                 : state.zoom <= 0.25
-                  ? 8
+                  ? 16
                   : 0;
   }
 };
