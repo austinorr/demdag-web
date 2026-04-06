@@ -25,7 +25,7 @@ export const render = (gl, program, textures, images, state) => {
     new Float32Array([
       0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0,
     ]),
-    gl.STATIC_DRAW
+    gl.STATIC_DRAW,
   );
 
   // lookup uniforms
@@ -56,7 +56,7 @@ export const render = (gl, program, textures, images, state) => {
     gl.FLOAT, // the data is 32bit floats
     false, // don't normalize the data
     0, // 0 = move forward size * sizeof(type) each iteration to get the next position
-    0 // start at the beginning of the buffer
+    0, // start at the beginning of the buffer
   );
 
   // Turn on the texcoord attribute
@@ -72,7 +72,7 @@ export const render = (gl, program, textures, images, state) => {
     gl.FLOAT, // the data is 32bit floats
     false, // don't normalize the data
     0, // 0 = move forward size * sizeof(type) each iteration to get the next position
-    0 // start at the beginning of the buffer
+    0, // start at the beginning of the buffer
   );
 
   // set the resolution
