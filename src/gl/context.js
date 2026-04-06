@@ -3,9 +3,11 @@ import fragSrc from "../shaders/watershed.frag.glsl";
 
 export const createContext = (canvas) => {
   canvas.style["image-rendering"] = "pixelated";
-  const gl = canvas.getContext("webgl", { antialias: false });
+  const gl = canvas.getContext("webgl2", { antialias: false });
   if (!gl) {
-    console.error("Cannot attach as webgl canvas to the document!");
+    const msg = "Your browser does not support WebGL 2. Please use a modern browser (Chrome, Firefox, Safari 15+, Edge).";
+    console.error(msg);
+    canvas.parentElement.innerHTML = `<p style="color:red; padding:1em">${msg}</p>`;
     return null;
   }
   return gl;
