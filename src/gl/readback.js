@@ -1,20 +1,27 @@
+// Synchronous pixel readback with reused buffer.
+// Counts pixels with blue channel = 255 (watershed area).
+
+let pixelBuf = null;
+let bufSize = 0;
+
 export const readPixels = (gl) => {
-  // the pixels with blue channel set to 255 are 'in' the watershed.
-  // this will add them up and render the result to the page.
-  let w_size = 0;
   const width = gl.canvas.width;
   const height = gl.canvas.height;
-  const pixels = new Uint8Array(width * height * 4); // 4 for RGBA
-  gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+  const needed = width * height * 4;
 
-  for (let i = 0; i < height; i++) {
-    for (let j = 0; j < width; j++) {
-      const idx = 4 * i * width + 4 * j;
+  // Reuse buffer across frames
+  if (needed !== bufSize) {
+    pixelBuf = new Uint8Array(needed);
+    bufSize = needed;
+  }
 
-      if (pixels[idx + 2] >= 255) {
-        w_size += 1;
-      }
+  gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixelBuf);
+
+  let count = 0;
+  for (let i = 2; i < needed; i += 4) {
+    if (pixelBuf[i] >= 255) {
+      count++;
     }
   }
-  return w_size;
+  return count;
 };
