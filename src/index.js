@@ -60,16 +60,16 @@ const getSnapRadius = () => {
       return state.zoom >= 8.0
         ? 0
         : state.zoom >= 4.0
-        ? 0
-        : state.zoom >= 2.0
-        ? 1
-        : state.zoom >= 1.0
-        ? 2
-        : state.zoom >= 0.5
-        ? 4
-        : state.zoom <= 0.25
-        ? 8
-        : 0;
+          ? 0
+          : state.zoom >= 2.0
+            ? 1
+            : state.zoom >= 1.0
+              ? 2
+              : state.zoom >= 0.5
+                ? 4
+                : state.zoom <= 0.25
+                  ? 8
+                  : 0;
   }
 };
 
@@ -88,14 +88,149 @@ const updateSnapState = () => {
   buttonMode.innerHTML = `mode: ${state.snapState}</br>radius: ${state.snapRadius}`;
 };
 
+// --- Performance counter ---
+
+const perfEnabled = new URLSearchParams(window.location.search).has("perf");
+
+if (perfEnabled) {
+  const el = document.getElementById("fps-container");
+  if (el) el.style.display = "";
+}
+
+let frameCount = 0;
+let lastFpsTime = performance.now();
+let cpuTimeSum = 0;
+let gpuTimeSum = 0;
+let latencySum = 0;
+let latencyCount = 0;
+let firstInputInBurst = 0;
+let gpuTimerExt = null;
+let pendingQuery = null;
+
+let isWebGL2 = false;
+
+const initGpuTimer = (gl) => {
+  if (!perfEnabled) return;
+
+  isWebGL2 =
+    typeof WebGL2RenderingContext !== "undefined" &&
+    gl instanceof WebGL2RenderingContext;
+
+  if (isWebGL2) {
+    gpuTimerExt = gl.getExtension("EXT_disjoint_timer_query_webgl2");
+  } else {
+    gpuTimerExt = gl.getExtension("EXT_disjoint_timer_query");
+  }
+
+  if (!gpuTimerExt) {
+    console.warn("GPU timer extension not available — showing CPU time only");
+  }
+};
+
+const collectGpuTime = (gl) => {
+  if (!pendingQuery || !gpuTimerExt) return;
+
+  const available = isWebGL2
+    ? gl.getQueryParameter(pendingQuery, gl.QUERY_RESULT_AVAILABLE)
+    : gpuTimerExt.getQueryObjectEXT(
+        pendingQuery,
+        gpuTimerExt.QUERY_RESULT_AVAILABLE_EXT,
+      );
+  const disjoint = gl.getParameter(gpuTimerExt.GPU_DISJOINT_EXT);
+
+  if (available && !disjoint) {
+    const ns = isWebGL2
+      ? gl.getQueryParameter(pendingQuery, gl.QUERY_RESULT)
+      : gpuTimerExt.getQueryObjectEXT(
+          pendingQuery,
+          gpuTimerExt.QUERY_RESULT_EXT,
+        );
+    gpuTimeSum += ns / 1e6; // ns → ms
+  }
+  if (available || disjoint) {
+    if (isWebGL2) {
+      gl.deleteQuery(pendingQuery);
+    } else {
+      gpuTimerExt.deleteQueryEXT(pendingQuery);
+    }
+    pendingQuery = null;
+  }
+};
+
+const updatePerf = (cpuMs) => {
+  frameCount++;
+  cpuTimeSum += cpuMs;
+  const now = performance.now();
+  const elapsed = now - lastFpsTime;
+  if (elapsed >= 1000) {
+    const fps = Math.round((frameCount * 1000) / elapsed);
+    const avgCpu = (cpuTimeSum / frameCount).toFixed(1);
+    let text = `${fps} fps / cpu ${avgCpu}ms`;
+    if (latencyCount > 0) {
+      const avgLat = (latencySum / latencyCount).toFixed(0);
+      text += ` / lag ${avgLat}ms`;
+    }
+    if (gpuTimerExt && gpuTimeSum > 0) {
+      const avgGpu = (gpuTimeSum / frameCount).toFixed(1);
+      text += ` / gpu ${avgGpu}ms`;
+    }
+    frameCount = 0;
+    cpuTimeSum = 0;
+    gpuTimeSum = 0;
+    latencySum = 0;
+    latencyCount = 0;
+    lastFpsTime = now;
+    const fpsEl = document.getElementById("fps");
+    if (fpsEl) fpsEl.textContent = text;
+  }
+};
+
 // --- Render wrapper ---
 
 const doRender = () => {
   try {
-    if (!state.pinMax) {
-      state.mpos = snapToMaxAcc(state, state.gl, state.images);
+    const gl = state.gl;
+
+    if (perfEnabled) {
+      // Collect previous frame's GPU time (non-blocking)
+      if (gl) collectGpuTime(gl);
+
+      const t0 = performance.now();
+      if (!state.pinMax) {
+        state.mpos = snapToMaxAcc(state, state.gl, state.images);
+      }
+
+      // Start GPU timer query before draw
+      let queryStarted = false;
+      if (gl && gpuTimerExt && !pendingQuery) {
+        if (isWebGL2) {
+          pendingQuery = gl.createQuery();
+          gl.beginQuery(gpuTimerExt.TIME_ELAPSED_EXT, pendingQuery);
+        } else {
+          pendingQuery = gpuTimerExt.createQueryEXT();
+          gpuTimerExt.beginQueryEXT(gpuTimerExt.TIME_ELAPSED_EXT, pendingQuery);
+        }
+        queryStarted = true;
+      }
+
+      render(gl, state.program, state.textures, state.images, state);
+
+      // End GPU timer query after draw
+      if (queryStarted) {
+        if (isWebGL2) {
+          gl.endQuery(gpuTimerExt.TIME_ELAPSED_EXT);
+        } else {
+          gpuTimerExt.endQueryEXT(gpuTimerExt.TIME_ELAPSED_EXT);
+        }
+      }
+
+      updatePerf(performance.now() - t0);
+    } else {
+      if (!state.pinMax) {
+        state.mpos = snapToMaxAcc(state, state.gl, state.images);
+      }
+      render(gl, state.program, state.textures, state.images, state);
     }
-    render(state.gl, state.program, state.textures, state.images, state);
   } catch (e) {
     console.error(e);
   }
@@ -112,6 +247,8 @@ const initGL = (images) => {
   let canvas = document.getElementById("canvas");
   state.gl = createContext(canvas);
   if (!state.gl) return;
+
+  initGpuTimer(state.gl);
 
   state.program = createProgram(state.gl);
   if (!state.program) return;
@@ -144,7 +281,7 @@ const adjustZoom = createAdjustZoom(
   state,
   zooms,
   (z) => setZoom(state.gl, z),
-  updateSnapState
+  updateSnapState,
 );
 
 // --- Units ---
@@ -167,7 +304,7 @@ document.querySelector("#canvas").addEventListener(
       event.preventDefault();
     }
   },
-  { passive: false }
+  { passive: false },
 );
 
 document.querySelector("#canvas").addEventListener("touchend", (event) => {
@@ -183,6 +320,14 @@ const onMove = (e) => {
   const mobileOffset = (isMobile * 50) / state.zoom;
   state.mousePos.x = x;
   state.mousePos.y = y - mobileOffset;
+  if (perfEnabled && !firstInputInBurst) {
+    firstInputInBurst = performance.now();
+    requestAnimationFrame(() => {
+      latencySum += performance.now() - firstInputInBurst;
+      latencyCount++;
+      firstInputInBurst = 0;
+    });
+  }
   console.debug("mousePos", state.mousePos);
   doRender();
 
@@ -225,11 +370,18 @@ const main = async (example) => {
     example = urlParams.get("example");
   }
 
+  const params = new URLSearchParams(window.location.search);
   if (example == "lg") {
-    window.history.pushState({}, document.title, "./?example=lg");
+    params.set("example", "lg");
+  } else {
+    params.delete("example");
+  }
+  const qs = params.toString();
+  window.history.pushState({}, document.title, "./" + (qs ? "?" + qs : ""));
+
+  if (example == "lg") {
     mainLG();
   } else {
-    window.history.pushState({}, document.title, "./");
     mainSM();
   }
   locateHUD();

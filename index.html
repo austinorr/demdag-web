@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -62,6 +62,17 @@
         Hover over the image (or touch) to see the complete watershed
         delineation upstream of each pixel.<br />On mobile devices, use two
         fingers to pan.
+        <span
+          id="fps-container"
+          style="
+            margin-left: 0.5em;
+            font-family: monospace;
+            font-size: small;
+            align-self: center;
+            display: none;
+          "
+          ><span id="fps">-</span> fps</span
+        >
       </div>
       <div id="nav-zoom" style="display: flex; margin-top: 1rem">
         <button onclick="main('sm')">Mini Map</button>
