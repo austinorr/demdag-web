@@ -1,5 +1,5 @@
-import vertSrc from "../shaders/watershed.vert.glsl?raw";
-import fragSrc from "../shaders/watershed.frag.glsl?raw";
+import vertSrc from "../shaders/watershed.vert.glsl";
+import fragSrc from "../shaders/watershed.frag.glsl";
 
 export const createContext = (canvas) => {
   canvas.style["image-rendering"] = "pixelated";
