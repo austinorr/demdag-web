@@ -18,12 +18,14 @@ import {
   isTouchDevice,
   snapToMaxAcc,
 } from "./ui/input.js";
+import { initSlippyMap } from "./map/slippy-map.js";
 
 // --- State ---
 
 const zooms = [0.25, 0.5, 1, 2, 4, 8, 16];
 const snapStateOpt = ["zoom", "large", "none"];
 const snapLarge = 40;
+const slippySnapRadii = [0, 4, 16, 32];
 
 const state = {
   gl: null,
@@ -35,6 +37,8 @@ const state = {
   snapStateIx: 0,
   snapState: snapStateOpt[0],
   snapRadius: 0,
+  slippySnapIx: 1, // default to 4
+  slippySnapRadius: slippySnapRadii[1],
   npixels: 0,
   showArea: false,
   pinMax: false,
@@ -76,16 +80,28 @@ const getSnapRadius = () => {
 state.snapRadius = getSnapRadius();
 
 const cycleSnapState = () => {
-  state.snapStateIx = (state.snapStateIx + 1) % snapStateOpt.length;
-  state.snapState = snapStateOpt[state.snapStateIx];
-  state.snapRadius = getSnapRadius();
+  if (slippyActive) {
+    state.slippySnapIx = (state.slippySnapIx + 1) % slippySnapRadii.length;
+    state.slippySnapRadius = slippySnapRadii[state.slippySnapIx];
+    state.snapRadius = state.slippySnapRadius;
+  } else {
+    state.snapStateIx = (state.snapStateIx + 1) % snapStateOpt.length;
+    state.snapState = snapStateOpt[state.snapStateIx];
+    state.snapRadius = getSnapRadius();
+  }
   return state.snapState;
 };
 
 const updateSnapState = () => {
-  state.snapRadius = getSnapRadius();
-  let buttonMode = document.getElementById("snapMode");
-  buttonMode.innerHTML = `mode: ${state.snapState}</br>radius: ${state.snapRadius}`;
+  if (slippyActive) {
+    state.snapRadius = state.slippySnapRadius;
+    let buttonMode = document.getElementById("snapMode");
+    buttonMode.innerHTML = `radius: ${state.snapRadius}`;
+  } else {
+    state.snapRadius = getSnapRadius();
+    let buttonMode = document.getElementById("snapMode");
+    buttonMode.innerHTML = `mode: ${state.snapState}</br>radius: ${state.snapRadius}`;
+  }
 };
 
 // --- Performance counter ---
@@ -358,9 +374,31 @@ document.querySelector("#canvas").addEventListener("mouseexit", () => {
   document.getElementById("area-summary").style.display = "none";
 });
 
+// --- View switching ---
+
+let slippyMap = null;
+let slippyActive = false;
+
+const showCanvasView = () => {
+  slippyActive = false;
+  document.getElementById("canvas-container").style.display = "flex";
+  document.getElementById("map-container").style.display = "none";
+  document.getElementById("area-units").style.display = "flex";
+  document.getElementById("area-summary").style.display = "";
+};
+
+const showMapView = () => {
+  slippyActive = true;
+  document.getElementById("canvas-container").style.display = "none";
+  document.getElementById("map-container").style.display = "block";
+  document.getElementById("area-units").style.display = "none";
+  document.getElementById("area-summary").style.display = "none";
+};
+
 // --- Main ---
 
 const mainSM = async () => {
+  showCanvasView();
   state.zix = datasets.sm.defaultZix;
   state.zoom = zooms[state.zix];
   const images = await loadImages(datasets.sm.urls);
@@ -368,10 +406,36 @@ const mainSM = async () => {
 };
 
 const mainLG = async () => {
+  showCanvasView();
   state.zix = datasets.lg.defaultZix;
   state.zoom = zooms[state.zix];
   const images = await loadImages(datasets.lg.urls);
   initGL(images);
+};
+
+const mainSlippyConn = async () => {
+  showMapView();
+  const startZ = slippyMap ? slippyMap.getZoom() : 4;
+  state.slippySnapRadius = startZ < 8 ? 16 : state.slippySnapRadius;
+  state.slippySnapIx = slippySnapRadii.indexOf(state.slippySnapRadius);
+  state.snapRadius = state.slippySnapRadius;
+  console.log("mode: ", import.meta.env.PROD);
+  const cogBase = import.meta.env.PROD
+    ? "https://pub-68a42a1442d1489680f4073a62efaef0.r2.dev/cog/"
+    : `${import.meta.env.BASE_URL}cog/`;
+  const discUrl = `${cogBase}fdr_discovery.tif`;
+  const finiUrl = `${cogBase}fdr_finish.tif`;
+
+  try {
+    if (!slippyMap) {
+      slippyMap = await initSlippyMap("map-container", discUrl, finiUrl, state);
+    } else {
+      slippyMap.resize();
+    }
+    console.debug("slippyMap initialized", slippyMap);
+  } catch (e) {
+    console.error("initSlippyMap failed:", e);
+  }
 };
 
 const main = async (example) => {
@@ -383,13 +447,17 @@ const main = async (example) => {
   const params = new URLSearchParams(window.location.search);
   if (example == "lg") {
     params.set("example", "lg");
+  } else if (example == "slippy-conn") {
+    params.set("example", "slippy-conn");
   } else {
     params.delete("example");
   }
   const qs = params.toString();
   window.history.pushState({}, document.title, "./" + (qs ? "?" + qs : ""));
 
-  if (example == "lg") {
+  if (example == "slippy-conn") {
+    mainSlippyConn();
+  } else if (example == "lg") {
     mainLG();
   } else {
     mainSM();
@@ -401,7 +469,13 @@ const main = async (example) => {
 // --- Expose to HTML onclick handlers ---
 
 window.main = main;
-window.adjustZoom = (inc) => adjustZoom(inc);
+window.adjustZoom = (inc) => {
+  if (slippyActive && slippyMap) {
+    slippyMap.zoomTo(Math.round(slippyMap.getZoom()) + inc);
+  } else {
+    adjustZoom(inc);
+  }
+};
 window.changeUnits = changeUnits;
 
 // --- Init ---
