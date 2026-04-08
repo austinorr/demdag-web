@@ -12,13 +12,8 @@ import {
   updateArea,
   maybeShowAreaSummary,
 } from "./ui/controls.js";
-import {
-  getNoPaddingNoBorderCanvasRelativeMousePosition,
-  mobileAndTabletCheck,
-  isTouchDevice,
-  snapToMaxAcc,
-} from "./ui/input.js";
-import { initSlippyMap } from "./map/slippy-map.js";
+import { getNoPaddingNoBorderCanvasRelativeMousePosition } from "./ui/input.js";
+import { snapToMaxAcc } from "./snap.js";
 
 // --- State ---
 
@@ -49,7 +44,7 @@ const state = {
   selectedUnit: units.at(-1),
 };
 
-const isMobile = isTouchDevice() || mobileAndTabletCheck();
+let isTouch = false;
 var touchCount = 0;
 
 // --- Snap logic ---
@@ -203,6 +198,24 @@ const updatePerf = (cpuMs) => {
 
 // --- Render wrapper ---
 
+const doSnap = () => {
+  const im = state.images[0];
+  if (state.snapRadius <= 0 || state.images.length < 3) return state.mousePos;
+  const col = Math.floor((state.mousePos.x / state.gl.canvas.width) * im.width);
+  const row = Math.floor(
+    (state.mousePos.y / state.gl.canvas.height) * im.height,
+  );
+  return snapToMaxAcc(
+    col,
+    row,
+    state.snapRadius,
+    state.images[0]._raw_data,
+    state.images[1]._raw_data,
+    im.width,
+    im.height,
+  );
+};
+
 const doRender = () => {
   try {
     const gl = state.gl;
@@ -213,7 +226,7 @@ const doRender = () => {
 
       const t0 = performance.now();
       if (!state.pinMax) {
-        state.mpos = snapToMaxAcc(state, state.gl, state.images);
+        state.mpos = doSnap();
       }
 
       // Start GPU timer query before draw
@@ -243,7 +256,7 @@ const doRender = () => {
       updatePerf(performance.now() - t0);
     } else {
       if (!state.pinMax) {
-        state.mpos = snapToMaxAcc(state, state.gl, state.images);
+        state.mpos = doSnap();
       }
       render(gl, state.program, state.textures, state.images, state);
     }
@@ -334,8 +347,9 @@ document.querySelector("#canvas").addEventListener("click", () => {
 let rafPending = false;
 
 const onMove = (e) => {
+  if (e.pointerType) isTouch = e.pointerType === "touch";
   const { x, y } = getNoPaddingNoBorderCanvasRelativeMousePosition(e);
-  const mobileOffset = (isMobile * 50) / state.zoom;
+  const mobileOffset = (isTouch * 50) / state.zoom;
   state.mousePos.x = x;
   state.mousePos.y = y - mobileOffset;
 
@@ -419,7 +433,6 @@ const mainSlippyConn = async () => {
   state.slippySnapRadius = startZ < 8 ? 16 : state.slippySnapRadius;
   state.slippySnapIx = slippySnapRadii.indexOf(state.slippySnapRadius);
   state.snapRadius = state.slippySnapRadius;
-  console.log("mode: ", import.meta.env.PROD);
   const cogBase = import.meta.env.PROD
     ? "https://pub-68a42a1442d1489680f4073a62efaef0.r2.dev/cog/"
     : `${import.meta.env.BASE_URL}cog/`;
@@ -428,6 +441,7 @@ const mainSlippyConn = async () => {
 
   try {
     if (!slippyMap) {
+      const { initSlippyMap } = await import("./map/slippy-map.js");
       slippyMap = await initSlippyMap("map-container", discUrl, finiUrl, state);
     } else {
       slippyMap.resize();

@@ -2,7 +2,7 @@ import { fromArrayBuffer } from "geotiff";
 
 const tiffCache = {};
 
-export const loadImage = (url) => {
+const loadImage = (url) => {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.crossOrigin = "Anonymous"; // to avoid CORS if used with Canvas
@@ -33,16 +33,16 @@ export const loadTiff = async (url) => {
       const geoTiffDataBands = await imageTiff.readRasters();
       const geoTiffData = geoTiffDataBands[0];
 
-      // Pass raw Int32Array directly — uploaded as R32I integer texture in WebGL 2
-      const rawInt32 =
-        geoTiffData instanceof Int32Array
+      // Pass raw Uint32Array directly — uploaded as R32UI integer texture in WebGL 2
+      const rawUint32 =
+        geoTiffData instanceof Uint32Array
           ? geoTiffData
-          : new Int32Array(geoTiffData.buffer, geoTiffData.byteOffset, geoTiffData.length);
+          : new Uint32Array(geoTiffData.buffer, geoTiffData.byteOffset, geoTiffData.length);
 
       image = {
         width,
         height,
-        _raw_data: rawInt32,
+        _raw_data: rawUint32,
       };
 
       console.debug("data: ", image, url);
