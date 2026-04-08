@@ -9,9 +9,9 @@ uniform ivec2 u_mpos;
 uniform float u_zoom;
 uniform float u_snap;
 
-// data textures (integer)
-uniform highp isampler2D u_image0;
-uniform highp isampler2D u_image1;
+// data textures (unsigned integer)
+uniform highp usampler2D u_image0;
+uniform highp usampler2D u_image1;
 
 // background texture (RGBA)
 uniform sampler2D u_image2;
@@ -20,14 +20,14 @@ in vec2 v_texCoord;
 out vec4 fragColor;
 
 void main() {
-  // read discovery/finish at cursor position (integer texel fetch)
-  int dv = texelFetch(u_image0, u_mpos, 0).r;
-  int fv = texelFetch(u_image1, u_mpos, 0).r;
+  // read discovery/finish at cursor position (unsigned integer texel fetch)
+  uint dv = texelFetch(u_image0, u_mpos, 0).r;
+  uint fv = texelFetch(u_image1, u_mpos, 0).r;
 
   // read discovery/finish at this fragment's position
   ivec2 texel = ivec2(v_texCoord * vec2(textureSize(u_image0, 0)));
-  int d = texelFetch(u_image0, texel, 0).r;
-  int f = texelFetch(u_image1, texel, 0).r;
+  uint d = texelFetch(u_image0, texel, 0).r;
+  uint f = texelFetch(u_image1, texel, 0).r;
 
   fragColor = texture(u_image2, v_texCoord);
 

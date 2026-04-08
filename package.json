@@ -1,5 +1,7 @@
 {
   "type": "module",
+  "name": "demdag-web",
+  "version": "0.1.0",
   "scripts": {
     "sync": "aws s3 sync public/cog/ s3://demdag/cog/ --profile r2",
     "dev": "vite"

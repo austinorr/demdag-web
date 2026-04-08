@@ -9,7 +9,7 @@ import {
   getCOGImage,
 } from "./cog-source.js";
 import { createWatershedLayer } from "./watershed-layer.js";
-import { snapToMaxAccOverview } from "./cursor.js";
+import { snapToMaxAcc } from "../snap.js";
 
 // Register a CRS definition with proj4, fetching from epsg.io if needed
 const ensureCRS = async (epsg) => {
@@ -46,18 +46,8 @@ export const initSlippyMap = async (
 
   const levels = await getOverviewLevels(discCog);
 
-  // Full COG corners in lng/lat
-  const corners = [
-    fromNative.forward([bbox[0], bbox[3]]),
-    fromNative.forward([bbox[2], bbox[3]]),
-    fromNative.forward([bbox[2], bbox[1]]),
-    fromNative.forward([bbox[0], bbox[1]]),
-  ];
-
   const centerNative = [(bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2];
   const [centerLng, centerLat] = fromNative.forward(centerNative);
-  const [swLng, swLat] = corners[3];
-  const [neLng, neLat] = corners[1];
 
   const watershedLayer = createWatershedLayer("watershed-overlay");
 
@@ -134,11 +124,6 @@ export const initSlippyMap = async (
     style: { version: 8, sources, layers },
     center: [centerLng, centerLat],
     zoom: 6,
-    maxBounds: [
-      [swLng - 3, swLat - 3],
-      [neLng + 3, neLat + 3],
-    ],
-    dragPan: false,
   });
 
   // Coordinate transforms
@@ -642,8 +627,10 @@ export const initSlippyMap = async (
       );
       canvas.addEventListener(
         "touchend",
-        () => {
-          map.dragPan.disable();
+        (e) => {
+          if (e.touches.length === 0) {
+            map.dragPan.enable();
+          }
         },
         { passive: true },
       );
@@ -681,7 +668,7 @@ export const initSlippyMap = async (
         )
           return;
 
-        const snapped = snapToMaxAccOverview(
+        const snapped = snapToMaxAcc(
           dataX,
           dataY,
           appState.snapRadius,

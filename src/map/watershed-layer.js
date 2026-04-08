@@ -2,7 +2,8 @@
 // Projects data window corners to screen space each frame using map.project().
 // Cursor dv/fv are looked up on the CPU and passed as uint uniforms.
 
-import maplibregl from "maplibre-gl";
+import { compileShader, linkProgram } from "../gl/shader.js";
+import { createIntTexture } from "../gl/textures.js";
 
 const vertSrc = `#version 300 es
 in vec2 a_position;
@@ -52,48 +53,12 @@ void main() {
 
   fragColor = vec4(0.0);
 
-  // // draw the loupe
-  // vec2 ss = vec2(gl_FragCoord.x, u_resolution.y - gl_FragCoord.y);
-  // float mdist = distance(floor(u_mouse) + vec2(0.5, 0.5), ss);
-  // if (mdist < max(u_snap, 0.708)  && (mdist > u_snap - 1.41422 * 1.2 || mdist <= 0.4)) {
-  //   fragColor *= vec4(0.2, 0.2, 0.2, 1.0);
-  // }
-
-  // // Flow accumulation base layer (underneath watershed)
-  // if (u_showAcc == 1) {
-  //   uint acc = 1u + f - d;
-  //   if (acc > 1000u) {
-  //     float logAcc = log2(float(acc));
-  //     float t = clamp(logAcc / 20.0, 0.0, 1.0);
-  //     vec3 lo = vec3(0.68, 0.85, 1.0);
-  //     vec3 hi = vec3(0.05, 0.15, 0.6);
-  //     fragColor = vec4(mix(lo, hi, t), (0.2 + 0.6 * t) );
-  //   }
-  // }
-
-  // // Downstream (yellow)
-  // if (d <= u_dv && f >= u_fv) {
-  //   fragColor = vec4(1.0, 1.0, 0.0, u_opacity);
-  // }
-
   // Upstream watershed (blue)
   if (d > u_dv && f < u_fv) {
-    fragColor = vec4(0.1, 0.4, 0.9, u_opacity);
+    fragColor = vec4(0.0, 0.3, 1.0, u_opacity);
   }
 }
 `;
-
-const createShader = (gl, type, source) => {
-  const shader = gl.createShader(type);
-  gl.shaderSource(shader, source);
-  gl.compileShader(shader);
-  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-    console.error("Shader compile error:", gl.getShaderInfoLog(shader));
-    gl.deleteShader(shader);
-    return null;
-  }
-  return shader;
-};
 
 const GRID_N = 16;
 const GRID_VERTS = (GRID_N + 1) * (GRID_N + 1); // 289
@@ -134,19 +99,11 @@ export const createWatershedLayer = (id) => {
     onAdd(mapRef, gl) {
       map = mapRef;
 
-      const vs = createShader(gl, gl.VERTEX_SHADER, vertSrc);
-      const fs = createShader(gl, gl.FRAGMENT_SHADER, fragSrc);
+      const vs = compileShader(gl, gl.VERTEX_SHADER, vertSrc);
+      const fs = compileShader(gl, gl.FRAGMENT_SHADER, fragSrc);
       if (!vs || !fs) return;
-
-      program = gl.createProgram();
-      gl.attachShader(program, vs);
-      gl.attachShader(program, fs);
-      gl.linkProgram(program);
-
-      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-        console.error("Program link error:", gl.getProgramInfoLog(program));
-        return;
-      }
+      program = linkProgram(gl, vs, fs);
+      if (!program) return;
 
       posBuffer = gl.createBuffer();
 
@@ -260,32 +217,11 @@ export const createWatershedLayer = (id) => {
       dataWidth = width;
       dataHeight = height;
 
-      const createIntTexture = (data) => {
-        const tex = gl.createTexture();
-        gl.bindTexture(gl.TEXTURE_2D, tex);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-        gl.texImage2D(
-          gl.TEXTURE_2D,
-          0,
-          gl.R32UI,
-          width,
-          height,
-          0,
-          gl.RED_INTEGER,
-          gl.UNSIGNED_INT,
-          data,
-        );
-        return tex;
-      };
-
       if (discTexture) gl.deleteTexture(discTexture);
       if (finiTexture) gl.deleteTexture(finiTexture);
 
-      discTexture = createIntTexture(discData);
-      finiTexture = createIntTexture(finiData);
+      discTexture = createIntTexture(gl, discData, width, height);
+      finiTexture = createIntTexture(gl, finiData, width, height);
     },
 
     setCursorValues(dv, fv, tx, ty) {

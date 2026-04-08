@@ -1,5 +1,7 @@
-// Snap-to-max-accumulation in raster space using loaded tile data
-export const snapToMaxAccOverview = (col, row, radius, discData, finiData, width, height) => {
+// Snap-to-max-accumulation in raster space.
+// Searches a circular neighborhood and returns the pixel with the highest
+// flow accumulation (1 + finish - discovery).
+export const snapToMaxAcc = (col, row, radius, discData, finiData, width, height) => {
   if (radius <= 0) return { x: col, y: row };
 
   const snap2 = radius * radius;
