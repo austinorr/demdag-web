@@ -1,0 +1,1 @@
+import{o as e}from"./index-DOVHMQ-C.js";var t=class extends e{decodeBlock(e){return e}};export{t as default};

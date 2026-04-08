@@ -1,0 +1,1 @@
+import{o as e}from"./index-DOVHMQ-C.js";import{t}from"./pako.esm-DwifE7Sp.js";var n=class extends e{decodeBlock(e){return t(new Uint8Array(e)).buffer}};export{n as default};
