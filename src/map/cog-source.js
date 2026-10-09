@@ -1,12 +1,54 @@
-import { fromUrl } from "geotiff";
+import { fromCustomClient, BaseClient, BaseResponse } from "geotiff";
 
 // Cache open COG handles and image objects
 const cogCache = {};
 const imageCache = new Map(); // key: `${url}:${index}`
 
+// Fetch client that only accepts partial (206) responses. If the server
+// ignores the Range header, geotiff.js throws but leaves the response body
+// streaming, and the browser downloads the entire file in the background.
+// Seen on Cloudflare with objects over its 512 MB cache limit: the first
+// range request came back as a full-file 200. Cancel the body right away.
+class RangeOnlyResponse extends BaseResponse {
+  constructor(response) {
+    super();
+    this.response = response;
+  }
+  get status() {
+    return this.response.status;
+  }
+  getHeader(name) {
+    return this.response.headers.get(name);
+  }
+  getData() {
+    return this.response.arrayBuffer();
+  }
+}
+
+class RangeOnlyClient extends BaseClient {
+  async request({ headers, signal } = {}) {
+    // Files over Cloudflare's 512 MB cache limit are edge-BYPASS; their first
+    // cold range request has come back as a full-file 200, the next as 206.
+    // Cancel the body, retry once, then give up.
+    for (let attempt = 0; ; attempt++) {
+      const response = await fetch(this.url, { headers, signal });
+      if (!headers?.Range || response.status === 206) {
+        return new RangeOnlyResponse(response);
+      }
+      response.body?.cancel();
+      if (attempt >= 1) {
+        throw new Error(
+          `${this.url}: range request answered with ${response.status}, not 206`,
+        );
+      }
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  }
+}
+
 export const openCOG = async (url) => {
   if (!cogCache[url]) {
-    cogCache[url] = await fromUrl(url);
+    cogCache[url] = await fromCustomClient(new RangeOnlyClient(url));
   }
   return cogCache[url];
 };
