@@ -433,16 +433,16 @@ const mainSlippyConn = async () => {
   state.slippySnapRadius = startZ < 8 ? 16 : state.slippySnapRadius;
   state.slippySnapIx = slippySnapRadii.indexOf(state.slippySnapRadius);
   state.snapRadius = state.slippySnapRadius;
-  const cogBase = import.meta.env.PROD
-    ? "https://pub-68a42a1442d1489680f4073a62efaef0.r2.dev/cog/"
-    : `${import.meta.env.BASE_URL}cog/`;
-  const discUrl = `${cogBase}fdr_discovery.tif`;
-  const finiUrl = `${cogBase}fdr_finish.tif`;
+  // COG manifest + pairs come from the bucket by default. To use the local
+  // mirror in _no_git_public/cog/ instead:  VITE_COG_BASE=/demdag-web/cog/ npm run dev
+  const cogBase =
+    import.meta.env.VITE_COG_BASE ?? "https://demdag-data.austinmartinorr.com/cog/";
+  const manifestUrl = `${cogBase}manifest.json`;
 
   try {
     if (!slippyMap) {
       const { initSlippyMap } = await import("./map/slippy-map.js");
-      slippyMap = await initSlippyMap("map-container", discUrl, finiUrl, state);
+      slippyMap = await initSlippyMap("map-container", manifestUrl, state);
     } else {
       slippyMap.resize();
     }

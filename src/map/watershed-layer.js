@@ -1,9 +1,12 @@
-// MapLibre CustomLayerInterface that renders the watershed overlay.
-// Projects data window corners to screen space each frame using map.project().
-// Cursor dv/fv are looked up on the CPU and passed as uint uniforms.
+// MapLibre CustomLayerInterface that renders the watershed overlay for any
+// number of datasets (one discovery/finish COG pair each). One program; each
+// dataset is drawn as its own warped mesh with its own textures and cursor
+// uniforms, because discovery/finish values are only comparable within a pair.
+//
+// Each entry is a plain object owned by slippy-map.js with at least:
+//   { active, tex: { disc, fini }, w, h, grid, dv, fv, cursor: [x, y] }
 
 import { compileShader, linkProgram } from "../gl/shader.js";
-import { createIntTexture } from "../gl/textures.js";
 
 const vertSrc = `#version 300 es
 in vec2 a_position;
@@ -24,11 +27,10 @@ uniform highp usampler2D u_discovery;
 uniform highp usampler2D u_finish;
 uniform uint u_dv;
 uniform uint u_fv;
+uniform uint u_nodata;
 uniform ivec2 u_dataSize;
 uniform ivec2 u_cursorTexel;
 uniform float u_opacity;
-uniform int u_level;
-uniform int u_showAcc;
 
 in vec2 v_texCoord;
 out vec4 fragColor;
@@ -42,46 +44,39 @@ void main() {
   ivec2 texel = ivec2(v_texCoord * vec2(u_dataSize));
   texel = clamp(texel, ivec2(0), u_dataSize - 1);
 
+  uint d = texelFetch(u_discovery, texel, 0).r;
+  if (d == u_nodata) discard;
+
   // Selected pixel — shade grey
   if (texel == u_cursorTexel) {
     fragColor = vec4(0.5, 0.5, 0.5, u_opacity);
     return;
   }
 
-  uint d = texelFetch(u_discovery, texel, 0).r;
   uint f = texelFetch(u_finish, texel, 0).r;
 
-  fragColor = vec4(0.0);
-
-  // Upstream watershed (blue)
-  if (d > u_dv && f < u_fv) {
+  // Upstream watershed (blue). f is the max discovery in the subtree, so
+  // descendants on the path to that leaf have f == u_fv: use >= / <=.
+  if (d >= u_dv && f <= u_fv) {
     fragColor = vec4(0.0, 0.3, 1.0, u_opacity);
+  } else {
+    discard;
   }
 }
 `;
 
-const GRID_N = 16;
+export const GRID_N = 16;
 const GRID_VERTS = (GRID_N + 1) * (GRID_N + 1); // 289
 const GRID_INDICES = GRID_N * GRID_N * 6; // 1536
 
-export const createWatershedLayer = (id) => {
-  let gridLngLat = null; // flat array of [lng,lat] pairs, (GRID_N+1)^2 entries
+export const createWatershedLayer = (id, nodata = 0) => {
+  let entries = [];
   let map = null;
   let program = null;
   let posBuffer = null;
   let texBuffer = null;
   let indexBuffer = null;
-  let discTexture = null;
-  let finiTexture = null;
-  let cursorDv = 0;
-  let cursorFv = 0;
-  let cursorTexelX = -1;
-  let cursorTexelY = -1;
   let opacity = 0.8;
-  let currentLevel = 0;
-  let showAcc = true;
-  let dataWidth = 0;
-  let dataHeight = 0;
 
   // Cached locations
   let posLoc = -1;
@@ -143,7 +138,6 @@ export const createWatershedLayer = (id) => {
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
       gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
 
-      // Cache locations once
       posLoc = gl.getAttribLocation(program, "a_position");
       texLoc = gl.getAttribLocation(program, "a_texCoord");
       uniforms = {
@@ -151,31 +145,24 @@ export const createWatershedLayer = (id) => {
         finish: gl.getUniformLocation(program, "u_finish"),
         dv: gl.getUniformLocation(program, "u_dv"),
         fv: gl.getUniformLocation(program, "u_fv"),
+        nodata: gl.getUniformLocation(program, "u_nodata"),
         dataSize: gl.getUniformLocation(program, "u_dataSize"),
         cursorTexel: gl.getUniformLocation(program, "u_cursorTexel"),
         opacity: gl.getUniformLocation(program, "u_opacity"),
-        level: gl.getUniformLocation(program, "u_level"),
-        showAcc: gl.getUniformLocation(program, "u_showAcc"),
       };
     },
 
-    render(gl, options) {
-      if (!program || !map || !discTexture || !finiTexture || !gridLngLat)
-        return;
+    render(gl) {
+      if (!program || !map) return;
+
+      const drawable = entries.filter(
+        (e) => e.active && e.tex.disc && e.tex.fini && e.grid,
+      );
+      if (drawable.length === 0) return;
 
       const canvas = map.getCanvas();
       const cw = canvas.clientWidth;
       const ch = canvas.clientHeight;
-
-      // Project each grid vertex to clip space
-      for (let i = 0; i < gridLngLat.length; i++) {
-        const p = map.project(gridLngLat[i]);
-        posData[i * 2] = (p.x / cw) * 2 - 1;
-        posData[i * 2 + 1] = 1 - (p.y / ch) * 2;
-      }
-
-      gl.bindBuffer(gl.ARRAY_BUFFER, posBuffer);
-      gl.bufferData(gl.ARRAY_BUFFER, posData, gl.DYNAMIC_DRAW);
 
       gl.useProgram(program);
       gl.disable(gl.DEPTH_TEST);
@@ -183,64 +170,46 @@ export const createWatershedLayer = (id) => {
       gl.enable(gl.BLEND);
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
-      gl.enableVertexAttribArray(posLoc);
-      gl.bindBuffer(gl.ARRAY_BUFFER, posBuffer);
-      gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
-
       gl.enableVertexAttribArray(texLoc);
       gl.bindBuffer(gl.ARRAY_BUFFER, texBuffer);
       gl.vertexAttribPointer(texLoc, 2, gl.FLOAT, false, 0, 0);
-
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
 
-      gl.activeTexture(gl.TEXTURE4);
-      gl.bindTexture(gl.TEXTURE_2D, discTexture);
       gl.uniform1i(uniforms.discovery, 4);
-
-      gl.activeTexture(gl.TEXTURE5);
-      gl.bindTexture(gl.TEXTURE_2D, finiTexture);
       gl.uniform1i(uniforms.finish, 5);
-
-      gl.uniform1ui(uniforms.dv, cursorDv);
-      gl.uniform1ui(uniforms.fv, cursorFv);
-      gl.uniform2i(uniforms.dataSize, dataWidth, dataHeight);
-      gl.uniform2i(uniforms.cursorTexel, cursorTexelX, cursorTexelY);
+      gl.uniform1ui(uniforms.nodata, nodata);
       gl.uniform1f(uniforms.opacity, opacity);
-      gl.uniform1i(uniforms.level, currentLevel);
-      gl.uniform1i(uniforms.showAcc, showAcc ? 1 : 0);
 
-      gl.drawElements(gl.TRIANGLES, GRID_INDICES, gl.UNSIGNED_SHORT, 0);
+      for (const e of drawable) {
+        // Project this entry's grid vertices to clip space
+        for (let i = 0; i < e.grid.length; i++) {
+          const p = map.project(e.grid[i]);
+          posData[i * 2] = (p.x / cw) * 2 - 1;
+          posData[i * 2 + 1] = 1 - (p.y / ch) * 2;
+        }
+        gl.enableVertexAttribArray(posLoc);
+        gl.bindBuffer(gl.ARRAY_BUFFER, posBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, posData, gl.DYNAMIC_DRAW);
+        gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
+
+        gl.activeTexture(gl.TEXTURE4);
+        gl.bindTexture(gl.TEXTURE_2D, e.tex.disc);
+        gl.activeTexture(gl.TEXTURE5);
+        gl.bindTexture(gl.TEXTURE_2D, e.tex.fini);
+
+        gl.uniform1ui(uniforms.dv, e.dv);
+        gl.uniform1ui(uniforms.fv, e.fv);
+        gl.uniform2i(uniforms.dataSize, e.w, e.h);
+        gl.uniform2i(uniforms.cursorTexel, e.cursor[0], e.cursor[1]);
+
+        gl.drawElements(gl.TRIANGLES, GRID_INDICES, gl.UNSIGNED_SHORT, 0);
+      }
+
       gl.disable(gl.BLEND);
     },
 
-    updateTextures(gl, discData, finiData, width, height) {
-      dataWidth = width;
-      dataHeight = height;
-
-      if (discTexture) gl.deleteTexture(discTexture);
-      if (finiTexture) gl.deleteTexture(finiTexture);
-
-      discTexture = createIntTexture(gl, discData, width, height);
-      finiTexture = createIntTexture(gl, finiData, width, height);
-    },
-
-    setCursorValues(dv, fv, tx, ty) {
-      cursorDv = dv;
-      cursorFv = fv;
-      cursorTexelX = tx;
-      cursorTexelY = ty;
-    },
-
-    setLevel(levelIndex) {
-      currentLevel = levelIndex;
-    },
-
-    setShowAcc(v) {
-      showAcc = v;
-    },
-
-    setDataGrid(lngLatGrid) {
-      gridLngLat = lngLatGrid;
+    setEntries(list) {
+      entries = list;
     },
 
     setOpacity(v) {

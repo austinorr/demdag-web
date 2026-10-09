@@ -8,8 +8,17 @@ import {
   getOverviewLevels,
   getCOGImage,
 } from "./cog-source.js";
-import { createWatershedLayer } from "./watershed-layer.js";
+import { createWatershedLayer, GRID_N } from "./watershed-layer.js";
+import { createIntTexture } from "../gl/textures.js";
 import { snapToMaxAcc } from "../snap.js";
+
+// Below this zoom no raster data is loaded or drawn: a nationwide viewport
+// would intersect well over a hundred HUC04 pairs.
+const MINZOOM = 6;
+// Discovery value of cells outside the flow graph (DFS counter starts at 1).
+const NODATA = 0;
+// Crude cap on the shared tile cache (entries, not bytes).
+const TILE_CACHE_MAX = 1500;
 
 // Register a CRS definition with proj4, fetching from epsg.io if needed
 const ensureCRS = async (epsg) => {
@@ -25,31 +34,40 @@ const ensureCRS = async (epsg) => {
 
 const DEBUG = new URLSearchParams(window.location.search).has("debug");
 
-export const initSlippyMap = async (
-  container,
-  cogDiscUrl,
-  cogFiniUrl,
-  appState,
-) => {
-  const [discCog, finiCog] = await Promise.all([
-    openCOG(cogDiscUrl),
-    openCOG(cogFiniUrl),
-  ]);
+const toUint32 = (raw) =>
+  raw instanceof Uint32Array
+    ? raw
+    : new Uint32Array(raw.buffer, raw.byteOffset, raw.length);
 
-  const info = await getCOGInfo(discCog);
-  const { origin, resolution, width, height, bbox, tileSize, epsg } = info;
+// bbox = [w, s, e, n] in degrees; bounds = maplibregl.LngLatBounds
+const bboxIntersects = (bbox, bounds) =>
+  bbox[0] < bounds.getEast() &&
+  bbox[2] > bounds.getWest() &&
+  bbox[1] < bounds.getNorth() &&
+  bbox[3] > bounds.getSouth();
 
-  if (!epsg) throw new Error("COG has no EPSG code in GeoKeys");
-  const cogCRS = await ensureCRS(epsg);
-  const toNative = proj4("EPSG:4326", cogCRS);
-  const fromNative = proj4(cogCRS, "EPSG:4326");
+export const initSlippyMap = async (container, manifestUrl, appState) => {
+  // Manifest: [{ id, bbox: [w, s, e, n] }, ...]. Pair files live at
+  // huc04/{id}/fdr_discovery.tif and huc04/{id}/fdr_finish.tif beside it.
+  const resp = await fetch(manifestUrl);
+  if (!resp.ok) throw new Error(`manifest fetch failed: ${resp.status}`);
+  const manifest = await resp.json();
+  const manifestBase = new URL(manifestUrl, window.location.href);
+  const urlFor = (id, name) => new URL(`huc04/${id}/${name}`, manifestBase).href;
 
-  const levels = await getOverviewLevels(discCog);
+  // Initial view: centre of the union of all bboxes
+  const union = manifest.reduce(
+    (u, e) => [
+      Math.min(u[0], e.bbox[0]),
+      Math.min(u[1], e.bbox[1]),
+      Math.max(u[2], e.bbox[2]),
+      Math.max(u[3], e.bbox[3]),
+    ],
+    [Infinity, Infinity, -Infinity, -Infinity],
+  );
+  const center = [(union[0] + union[2]) / 2, (union[1] + union[3]) / 2];
 
-  const centerNative = [(bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2];
-  const [centerLng, centerLat] = fromNative.forward(centerNative);
-
-  const watershedLayer = createWatershedLayer("watershed-overlay");
+  const watershedLayer = createWatershedLayer("watershed-overlay", NODATA);
 
   const basemaps = {
     osm: {
@@ -122,51 +140,108 @@ export const initSlippyMap = async (
   const map = new maplibregl.Map({
     container,
     style: { version: 8, sources, layers },
-    center: [centerLng, centerLat],
-    zoom: 6,
+    center,
+    zoom: MINZOOM,
   });
 
-  // Coordinate transforms
-  const lngLatToPixel = (lng, lat) => {
-    const [x, y] = toNative.forward([lng, lat]);
+  // --- Datasets ---
+  // One record per visible manifest entry, created lazily and released when it
+  // leaves the view. The record doubles as the layer's render entry.
+  const active = new Map(); // id -> ds
+  const tileCache = new Map(); // `${id}:${level}:${tc}:${tr}` -> tile
+
+  const createDataset = (entry) => {
+    const ds = {
+      id: entry.id,
+      entry,
+      ready: null,
+      // filled by ready
+      discCog: null,
+      finiCog: null,
+      info: null,
+      levels: null,
+      toNative: null,
+      fromNative: null,
+      fullResZoom: 0,
+      // loaded window state
+      disc: null,
+      fini: null,
+      w: 0,
+      h: 0,
+      window: null, // [x0, y0, x1, y1] in full-res pixel space
+      levelIndex: -1,
+      loading: false,
+      pending: false,
+      // render entry
+      tex: { disc: null, fini: null },
+      grid: null,
+      dv: 0,
+      fv: 0,
+      cursor: [-1, -1],
+      active: false,
+    };
+
+    ds.ready = (async () => {
+      const [discCog, finiCog] = await Promise.all([
+        openCOG(urlFor(ds.id, "fdr_discovery.tif")),
+        openCOG(urlFor(ds.id, "fdr_finish.tif")),
+      ]);
+      const info = await getCOGInfo(discCog);
+      if (!info.epsg) throw new Error(`${ds.id}: COG has no EPSG code`);
+      const crs = await ensureCRS(info.epsg);
+      ds.discCog = discCog;
+      ds.finiCog = finiCog;
+      ds.info = info;
+      ds.levels = await getOverviewLevels(discCog);
+      ds.toNative = proj4("EPSG:4326", crs);
+      ds.fromNative = proj4(crs, "EPSG:4326");
+      // Map zoom z has ~156543/2^z m/px at the equator; find the zoom where
+      // that matches this dataset's full-res pixel size.
+      ds.fullResZoom = Math.log2(156543.03 / Math.abs(info.resolution[0]));
+    })();
+    ds.ready.catch((e) => console.error(`dataset ${ds.id} failed to open:`, e));
+
+    return ds;
+  };
+
+  const releaseDataset = (ds) => {
+    const gl = map.painter.context.gl;
+    if (ds.tex.disc) gl.deleteTexture(ds.tex.disc);
+    if (ds.tex.fini) gl.deleteTexture(ds.tex.fini);
+    ds.tex.disc = ds.tex.fini = null;
+    ds.disc = ds.fini = null;
+    ds.window = null;
+    ds.grid = null;
+    ds.active = false;
+    active.delete(ds.id);
+  };
+
+  // Coordinate transforms (full-res pixel space of one dataset)
+  const lngLatToPixel = (ds, lng, lat) => {
+    const { origin, resolution } = ds.info;
+    const [x, y] = ds.toNative.forward([lng, lat]);
     return {
       x: (x - origin[0]) / resolution[0],
       y: (y - origin[1]) / resolution[1],
     };
   };
 
-  const pixelToLngLat = (col, row) => {
+  const pixelToLngLat = (ds, col, row) => {
+    const { origin, resolution } = ds.info;
     const x = origin[0] + col * resolution[0];
     const y = origin[1] + row * resolution[1];
-    return fromNative.forward([x, y]);
+    return ds.fromNative.forward([x, y]);
   };
 
-  // --- Data loading state ---
-  let currentDiscData = null;
-  let currentFiniData = null;
-  let currentDataWidth = 0;
-  let currentDataHeight = 0;
-  let currentWindow = null; // [x0, y0, x1, y1] in full-res pixel space
-  let currentLevelIndex = -1;
-  let loading = false;
-
-  // Compute visible bounding box in full-res pixel space.
-  // Samples 8 points around the viewport boundary to handle
-  // Albers projection distortion.
-  const getVisibleWindow = () => {
-    const bounds = map.getBounds();
-    const w = bounds.getWest();
-    const e = bounds.getEast();
-    const n = bounds.getNorth();
-    const s = bounds.getSouth();
-
+  // Visible bounding box in full-res pixel space, clamped to the raster.
+  const getVisibleWindow = (ds) => {
+    const b = map.getBounds();
     const samples = [
-      lngLatToPixel(w, n),
-      lngLatToPixel(e, n),
-      lngLatToPixel(e, s),
-      lngLatToPixel(w, s),
+      lngLatToPixel(ds, b.getWest(), b.getNorth()),
+      lngLatToPixel(ds, b.getEast(), b.getNorth()),
+      lngLatToPixel(ds, b.getEast(), b.getSouth()),
+      lngLatToPixel(ds, b.getWest(), b.getSouth()),
     ];
-
     let x0 = Infinity,
       y0 = Infinity,
       x1 = -Infinity,
@@ -177,102 +252,51 @@ export const initSlippyMap = async (
       if (p.x > x1) x1 = p.x;
       if (p.y > y1) y1 = p.y;
     }
-
     return [
       Math.max(0, Math.floor(x0)),
       Math.max(0, Math.floor(y0)),
-      Math.min(width, Math.ceil(x1)),
-      Math.min(height, Math.ceil(y1)),
+      Math.min(ds.info.width, Math.ceil(x1)),
+      Math.min(ds.info.height, Math.ceil(y1)),
     ];
   };
 
-  const needsReload = (newLevelIndex) => {
-    if (!currentWindow || newLevelIndex !== currentLevelIndex) return true;
-    const bounds = map.getBounds();
-    const corners = [
-      lngLatToPixel(bounds.getWest(), bounds.getNorth()),
-      lngLatToPixel(bounds.getEast(), bounds.getNorth()),
-      lngLatToPixel(bounds.getEast(), bounds.getSouth()),
-      lngLatToPixel(bounds.getWest(), bounds.getSouth()),
-    ];
-    let x0 = Infinity,
-      y0 = Infinity,
-      x1 = -Infinity,
-      y1 = -Infinity;
-    for (const p of corners) {
-      if (p.x < x0) x0 = p.x;
-      if (p.y < y0) y0 = p.y;
-      if (p.x > x1) x1 = p.x;
-      if (p.y > y1) y1 = p.y;
-    }
+  const needsReload = (ds, levelIndex, visWindow) => {
+    if (!ds.window || levelIndex !== ds.levelIndex) return true;
     return (
-      x0 < currentWindow[0] ||
-      y0 < currentWindow[1] ||
-      x1 > currentWindow[2] ||
-      y1 > currentWindow[3]
+      visWindow[0] < ds.window[0] ||
+      visWindow[1] < ds.window[1] ||
+      visWindow[2] > ds.window[2] ||
+      visWindow[3] > ds.window[3]
     );
   };
 
-  // Map zoom level to COG image index.
-  // levels[0] = full-res, levels[N] = coarsest.
-  // Each overview is ~2x reduction, each map zoom is ~2x magnification.
-  // At the minimum useful zoom (~8), use the coarsest overview.
-  // Each zoom step above that moves one level finer.
-  // z15 = level 0 (full-res), z14 = level 1, z13 = level 2, etc.
-  // Full-res pixel size in meters. Map zoom z has ~156543/2^z m/px at equator.
-  // Find the zoom level where the map resolution matches full-res COG resolution.
-  const pixelSizeM = Math.abs(resolution[0]);
-  const fullResZoom = Math.log2(156543.03 / pixelSizeM); // ~14.26 for 10m
-
-  const zoomToLevel = (z) => {
-    const maxOverview = levels.length - 1;
-    // How many 2x steps coarser than full-res do we need?
-    const stepsCoarser = Math.max(0, Math.floor(fullResZoom - z));
-    const levelIndex = Math.min(maxOverview, stepsCoarser);
-    console.debug(
-      `z=${z.toFixed(1)} fullResZoom=${fullResZoom.toFixed(1)} → level ${levelIndex} (${levels[levelIndex].width}x${levels[levelIndex].height})`,
-    );
-    return levels[levelIndex];
+  // Map zoom level to COG image index. levels[0] = full-res, levels[N] = coarsest.
+  const zoomToLevel = (ds, z) => {
+    const maxOverview = ds.levels.length - 1;
+    const stepsCoarser = Math.max(0, Math.floor(ds.fullResZoom - z));
+    return ds.levels[Math.min(maxOverview, stepsCoarser)];
   };
 
-  const toUint32 = (raw) =>
-    raw instanceof Uint32Array
-      ? raw
-      : new Uint32Array(raw.buffer, raw.byteOffset, raw.length);
-
-  const TILE = tileSize;
-
-  // Cache of loaded tiles: key = `${levelIndex}:${tileCol}:${tileRow}`
-  const tileCache = new Map();
-
-  const tileKey = (levelIndex, tc, tr) => `${levelIndex}:${tc}:${tr}`;
-
-  // Fetch a single tile from a COG at a given level.
-  // Returns { disc: Uint32Array, fini: Uint32Array } or null.
-  const fetchTile = async (levelIndex, tc, tr) => {
-    const key = tileKey(levelIndex, tc, tr);
+  // Fetch a single tile from both COGs of a dataset at a given level.
+  const fetchTile = async (ds, levelIndex, tc, tr) => {
+    const key = `${ds.id}:${levelIndex}:${tc}:${tr}`;
     if (tileCache.has(key)) return tileCache.get(key);
 
+    const TILE = ds.info.tileSize;
     const [image0, image1] = await Promise.all([
-      getCOGImage(discCog, levelIndex),
-      getCOGImage(finiCog, levelIndex),
+      getCOGImage(ds.discCog, levelIndex),
+      getCOGImage(ds.finiCog, levelIndex),
     ]);
 
     const imgW = image0.getWidth();
     const imgH = image0.getHeight();
-
     const x0 = tc * TILE;
     const y0 = tr * TILE;
     const x1 = Math.min(imgW, x0 + TILE);
     const y1 = Math.min(imgH, y0 + TILE);
-
     if (x0 >= imgW || y0 >= imgH) return null;
 
     const window = [x0, y0, x1, y1];
-    console.debug(
-      `fetchTile level=${levelIndex} tile=[${tc},${tr}] window=[${window}] imgSize=${imgW}x${imgH} fetchedSize=${x1 - x0}x${y1 - y0}`,
-    );
-
     const [discRasters, finiRasters] = await Promise.all([
       image0.readRasters({ window }),
       image1.readRasters({ window }),
@@ -285,13 +309,13 @@ export const initSlippyMap = async (
       h: y1 - y0,
     };
 
+    if (tileCache.size >= TILE_CACHE_MAX) tileCache.clear();
     tileCache.set(key, tile);
-    // console.log(`cache length: ${tileCache.size}`);
     return tile;
   };
 
-  // Assemble tiles into a single texture-sized buffer
-  const assembleTiles = (tiles, tilesX, tilesY, totalW, totalH) => {
+  // Assemble tiles into a single texture-sized buffer pair
+  const assembleTiles = (tiles, tilesX, tilesY, totalW, totalH, TILE) => {
     const disc = new Uint32Array(totalW * totalH);
     const fini = new Uint32Array(totalW * totalH);
 
@@ -299,10 +323,8 @@ export const initSlippyMap = async (
       for (let tc = 0; tc < tilesX; tc++) {
         const tile = tiles[tr * tilesX + tc];
         if (!tile) continue;
-
         const dstX = tc * TILE;
         const dstY = tr * TILE;
-
         for (let row = 0; row < tile.h; row++) {
           const srcOff = row * tile.w;
           const dstOff = (dstY + row) * totalW + dstX;
@@ -311,74 +333,70 @@ export const initSlippyMap = async (
         }
       }
     }
-
     return { disc, fini };
   };
 
-  const loadVisibleData = async () => {
-    if (loading) return;
-
-    const z = map.getZoom();
-    const level = zoomToLevel(z);
-
-    if (!needsReload(level.index)) return;
-
-    const visWindow = getVisibleWindow();
-    if (visWindow[2] - visWindow[0] <= 0 || visWindow[3] - visWindow[1] <= 0)
+  const loadVisibleData = async (ds) => {
+    if (ds.loading) {
+      ds.pending = true;
       return;
-
-    const scaleX = level.width / width;
-    const scaleY = level.height / height;
-
-    // Tile range in overview pixel space
-    const tc0 = Math.max(0, Math.floor((visWindow[0] * scaleX) / TILE));
-    const tr0 = Math.max(0, Math.floor((visWindow[1] * scaleY) / TILE));
-    const tc1 = Math.ceil((visWindow[2] * scaleX) / TILE);
-    const tr1 = Math.ceil((visWindow[3] * scaleY) / TILE);
-
-    const tilesX = tc1 - tc0;
-    const tilesY = tr1 - tr0;
-    if (tilesX <= 0 || tilesY <= 0) return;
-
-    const totalW = Math.min(level.width - tc0 * TILE, tilesX * TILE);
-    const totalH = Math.min(level.height - tr0 * TILE, tilesY * TILE);
-
-    console.debug(
-      `Loading level=${level.index} tiles=[${tc0},${tr0}]→[${tc1},${tr1}] (${tilesX}x${tilesY} tiles, ${totalW}x${totalH}px)`,
-      `\n  scaleX=${scaleX} scaleY=${scaleY} fullRes=${width}x${height} ovRes=${level.width}x${level.height}`,
-      `\n  visWindow=[${visWindow}] currentWindow=[${[(tc0 * TILE) / scaleX, (tr0 * TILE) / scaleY, (tc0 * TILE + totalW) / scaleX, (tr0 * TILE + totalH) / scaleY]}]`,
-    );
-
-    loading = true;
+    }
+    ds.loading = true;
     try {
-      // Fetch all visible tiles in parallel
+      await ds.ready;
+      if (active.get(ds.id) !== ds) return; // released while opening
+
+      const level = zoomToLevel(ds, map.getZoom());
+      const visWindow = getVisibleWindow(ds);
+      if (visWindow[2] - visWindow[0] <= 0 || visWindow[3] - visWindow[1] <= 0)
+        return;
+      if (!needsReload(ds, level.index, visWindow)) return;
+
+      const { width, height, tileSize: TILE } = ds.info;
+      const scaleX = level.width / width;
+      const scaleY = level.height / height;
+
+      // Tile range in overview pixel space
+      const tc0 = Math.max(0, Math.floor((visWindow[0] * scaleX) / TILE));
+      const tr0 = Math.max(0, Math.floor((visWindow[1] * scaleY) / TILE));
+      const tc1 = Math.ceil((visWindow[2] * scaleX) / TILE);
+      const tr1 = Math.ceil((visWindow[3] * scaleY) / TILE);
+      const tilesX = tc1 - tc0;
+      const tilesY = tr1 - tr0;
+      if (tilesX <= 0 || tilesY <= 0) return;
+
+      const totalW = Math.min(level.width - tc0 * TILE, tilesX * TILE);
+      const totalH = Math.min(level.height - tr0 * TILE, tilesY * TILE);
+
+      console.debug(
+        `[${ds.id}] level=${level.index} tiles=[${tc0},${tr0}]→[${tc1},${tr1}] (${tilesX}x${tilesY}, ${totalW}x${totalH}px)`,
+      );
+
       const tilePromises = [];
       for (let tr = tr0; tr < tr1; tr++) {
         for (let tc = tc0; tc < tc1; tc++) {
-          tilePromises.push(fetchTile(level.index, tc, tr));
+          tilePromises.push(fetchTile(ds, level.index, tc, tr));
         }
       }
       const tiles = await Promise.all(tilePromises);
+      if (active.get(ds.id) !== ds) return; // released while fetching
 
-      // Assemble into contiguous buffers
       const { disc, fini } = assembleTiles(
         tiles,
         tilesX,
         tilesY,
         totalW,
         totalH,
+        TILE,
       );
 
-      currentLevelIndex = level.index;
-      currentDiscData = disc;
-      currentFiniData = fini;
-      currentDataWidth = totalW;
-      currentDataHeight = totalH;
-
-      watershedLayer.setLevel(currentLevelIndex);
-
+      ds.levelIndex = level.index;
+      ds.disc = disc;
+      ds.fini = fini;
+      ds.w = totalW;
+      ds.h = totalH;
       // Back-project tile-aligned window to full-res space (for needsReload/cursor)
-      currentWindow = [
+      ds.window = [
         (tc0 * TILE) / scaleX,
         (tr0 * TILE) / scaleY,
         (tc0 * TILE + totalW) / scaleX,
@@ -386,85 +404,93 @@ export const initSlippyMap = async (
       ];
 
       const gl = map.painter.context.gl;
-      watershedLayer.updateTextures(gl, disc, fini, totalW, totalH);
+      if (ds.tex.disc) gl.deleteTexture(ds.tex.disc);
+      if (ds.tex.fini) gl.deleteTexture(ds.tex.fini);
+      ds.tex.disc = createIntTexture(gl, disc, totalW, totalH);
+      ds.tex.fini = createIntTexture(gl, fini, totalW, totalH);
 
-      // Build 17x17 grid of lng/lat points for reprojection mesh
-      const GRID_N = 16;
+      // (GRID_N+1)^2 lng/lat points for the reprojection mesh
       const grid = [];
-      const wx0 = currentWindow[0];
-      const wy0 = currentWindow[1];
-      const ww = currentWindow[2] - wx0;
-      const wh = currentWindow[3] - wy0;
+      const [wx0, wy0] = ds.window;
+      const ww = ds.window[2] - wx0;
+      const wh = ds.window[3] - wy0;
       for (let row = 0; row <= GRID_N; row++) {
         for (let col = 0; col <= GRID_N; col++) {
-          const px = wx0 + (col / GRID_N) * ww;
-          const py = wy0 + (row / GRID_N) * wh;
-          grid.push(pixelToLngLat(px, py));
+          grid.push(
+            pixelToLngLat(ds, wx0 + (col / GRID_N) * ww, wy0 + (row / GRID_N) * wh),
+          );
         }
       }
-      watershedLayer.setDataGrid(grid);
+      ds.grid = grid;
 
-      // Debug: draw fetch window and tile boundaries
       if (DEBUG) {
-        updateDebugBoundaries(
-          currentWindow,
-          tc0,
-          tr0,
-          tc1,
-          tr1,
-          scaleX,
-          scaleY,
-        );
+        updateDebugBoundaries(ds, tc0, tr0, tc1, tr1, scaleX, scaleY);
       }
-
       map.triggerRepaint();
     } catch (e) {
-      console.error("Failed to load tiles:", e);
+      console.error(`[${ds.id}] failed to load tiles:`, e);
+    } finally {
+      ds.loading = false;
+      if (ds.pending) {
+        ds.pending = false;
+        loadVisibleData(ds);
+      }
     }
-    loading = false;
+  };
+
+  // Sync the active dataset set with the viewport and (re)load each one.
+  const update = () => {
+    const z = map.getZoom();
+    const bounds = map.getBounds();
+    const visible =
+      z >= MINZOOM ? manifest.filter((e) => bboxIntersects(e.bbox, bounds)) : [];
+    const visibleIds = new Set(visible.map((e) => e.id));
+
+    for (const ds of [...active.values()]) {
+      if (!visibleIds.has(ds.id)) releaseDataset(ds);
+    }
+    for (const e of visible) {
+      if (!active.has(e.id)) active.set(e.id, createDataset(e));
+    }
+    watershedLayer.setEntries([...active.values()]);
+
+    for (const e of visible) loadVisibleData(active.get(e.id));
+    if (visible.length === 0) map.triggerRepaint();
   };
 
   // Helper: convert a pixel-space rect [x0,y0,x1,y1] to a GeoJSON polygon
-  const pixelRectToGeoJSON = (x0, y0, x1, y1) => {
-    const tl = pixelToLngLat(x0, y0);
-    const tr = pixelToLngLat(x1, y0);
-    const br = pixelToLngLat(x1, y1);
-    const bl = pixelToLngLat(x0, y1);
+  const pixelRectToGeoJSON = (ds, x0, y0, x1, y1) => {
+    const tl = pixelToLngLat(ds, x0, y0);
+    const tr = pixelToLngLat(ds, x1, y0);
+    const br = pixelToLngLat(ds, x1, y1);
+    const bl = pixelToLngLat(ds, x0, y1);
     return {
       type: "Feature",
-      geometry: {
-        type: "Polygon",
-        coordinates: [[tl, tr, br, bl, tl]],
-      },
+      geometry: { type: "Polygon", coordinates: [[tl, tr, br, bl, tl]] },
     };
   };
 
-  const updateDebugBoundaries = (
-    window,
-    tc0,
-    tr0,
-    tc1,
-    tr1,
-    scaleX,
-    scaleY,
-  ) => {
-    // Fetch window boundary
+  // Debug overlays show the most recently loaded dataset only.
+  const updateDebugBoundaries = (ds, tc0, tr0, tc1, tr1, scaleX, scaleY) => {
+    const TILE = ds.info.tileSize;
+    const w = ds.window;
     const fetchWindowGeo = {
       type: "FeatureCollection",
-      features: [
-        pixelRectToGeoJSON(window[0], window[1], window[2], window[3]),
-      ],
+      features: [pixelRectToGeoJSON(ds, w[0], w[1], w[2], w[3])],
     };
 
-    // Individual tile boundaries
     const tileFeatures = [];
     for (let tr = tr0; tr < tr1; tr++) {
       for (let tc = tc0; tc < tc1; tc++) {
-        const tx0 = (tc * TILE) / scaleX;
-        const ty0 = (tr * TILE) / scaleY;
-        const tx1 = ((tc + 1) * TILE) / scaleX;
-        const ty1 = ((tr + 1) * TILE) / scaleY;
-        tileFeatures.push(pixelRectToGeoJSON(tx0, ty0, tx1, ty1));
+        tileFeatures.push(
+          pixelRectToGeoJSON(
+            ds,
+            (tc * TILE) / scaleX,
+            (tr * TILE) / scaleY,
+            ((tc + 1) * TILE) / scaleX,
+            ((tr + 1) * TILE) / scaleY,
+          ),
+        );
       }
     }
     const tilesGeo = { type: "FeatureCollection", features: tileFeatures };
@@ -602,15 +628,63 @@ export const initSlippyMap = async (
 
   map.addControl(new LayersControl(), "top-right");
 
+  // Cursor: find the first active dataset with real data under the cursor,
+  // snap within it, and make it the only one that draws. If nothing is hit
+  // (outside all rasters, or over nodata) the previous selection stays.
+  const updateCursor = (lng, lat) => {
+    let hit = null;
+    let hx = 0;
+    let hy = 0;
+    for (const ds of active.values()) {
+      if (!ds.disc || !ds.window) continue;
+      const { x, y } = lngLatToPixel(ds, lng, lat);
+      if (x < 0 || x >= ds.info.width || y < 0 || y >= ds.info.height) continue;
+
+      const winW = ds.window[2] - ds.window[0];
+      const winH = ds.window[3] - ds.window[1];
+      const dataX = ((x - ds.window[0]) / winW) * ds.w;
+      const dataY = ((y - ds.window[1]) / winH) * ds.h;
+      if (dataX < 0 || dataX >= ds.w || dataY < 0 || dataY >= ds.h) continue;
+
+      const idx = Math.floor(dataY) * ds.w + Math.floor(dataX);
+      if (ds.disc[idx] === NODATA) continue;
+
+      hit = ds;
+      hx = dataX;
+      hy = dataY;
+      break;
+    }
+    if (!hit) return;
+
+    const snapped = snapToMaxAcc(
+      hx,
+      hy,
+      appState.snapRadius,
+      hit.disc,
+      hit.fini,
+      hit.w,
+      hit.h,
+      NODATA,
+    );
+    const tx = Math.floor(snapped.x);
+    const ty = Math.floor(snapped.y);
+    const idx = ty * hit.w + tx;
+
+    for (const ds of active.values()) ds.active = ds === hit;
+    hit.dv = hit.disc[idx];
+    hit.fv = hit.fini[idx];
+    hit.cursor = [tx, ty];
+    map.triggerRepaint();
+  };
+
   // Wait for map load
   await new Promise((resolve) => {
-    map.once("load", async () => {
+    map.once("load", () => {
       addOverlayLayers();
+      update();
 
-      await loadVisibleData();
-
-      map.on("zoomend", loadVisibleData);
-      map.on("moveend", loadVisibleData);
+      map.on("zoomend", update);
+      map.on("moveend", update);
 
       // Touch: single finger = cursor, two fingers = pan
       const canvas = map.getCanvasContainer();
@@ -648,45 +722,6 @@ export const initSlippyMap = async (
         },
         { passive: true },
       );
-
-      const updateCursor = (lng, lat) => {
-        if (!currentDiscData || !currentFiniData || !currentWindow) return;
-
-        const { x, y } = lngLatToPixel(lng, lat);
-        if (x < 0 || x >= width || y < 0 || y >= height) return;
-
-        const winW = currentWindow[2] - currentWindow[0];
-        const winH = currentWindow[3] - currentWindow[1];
-        const dataX = ((x - currentWindow[0]) / winW) * currentDataWidth;
-        const dataY = ((y - currentWindow[1]) / winH) * currentDataHeight;
-
-        if (
-          dataX < 0 ||
-          dataX >= currentDataWidth ||
-          dataY < 0 ||
-          dataY >= currentDataHeight
-        )
-          return;
-
-        const snapped = snapToMaxAcc(
-          dataX,
-          dataY,
-          appState.snapRadius,
-          currentDiscData,
-          currentFiniData,
-          currentDataWidth,
-          currentDataHeight,
-        );
-
-        const tx = Math.floor(snapped.x);
-        const ty = Math.floor(snapped.y);
-        const idx = ty * currentDataWidth + tx;
-        const dv = currentDiscData[idx];
-        const fv = currentFiniData[idx];
-
-        watershedLayer.setCursorValues(dv, fv, tx, ty);
-        map.triggerRepaint();
-      };
 
       map.on("mousemove", (e) => {
         updateCursor(e.lngLat.lng, e.lngLat.lat);
