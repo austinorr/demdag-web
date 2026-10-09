@@ -139,7 +139,12 @@ export const initSlippyMap = async (container, manifestUrl, appState) => {
 
   const map = new maplibregl.Map({
     container,
-    style: { version: 8, sources, layers },
+    style: {
+      version: 8,
+      glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
+      sources,
+      layers,
+    },
     center,
     zoom: MINZOOM,
   });
@@ -501,8 +506,49 @@ export const initSlippyMap = async (container, manifestUrl, appState) => {
     }
   };
 
+  // Outline of every manifest bbox (debug aid, toggled in the layers panel)
+  let showBoxes = false;
+  let showStreams = true;
+  const bboxGeoJSON = {
+    type: "FeatureCollection",
+    features: manifest.map((e) => {
+      const [w, s, ea, n] = e.bbox;
+      return {
+        type: "Feature",
+        properties: { id: e.id },
+        geometry: {
+          type: "Polygon",
+          coordinates: [[[w, n], [ea, n], [ea, s], [w, s], [w, n]]],
+        },
+      };
+    }),
+  };
+
   // Add custom layers (called on initial load + after basemap switch)
   const addOverlayLayers = () => {
+    if (!map.getSource("manifest-bboxes")) {
+      map.addSource("manifest-bboxes", { type: "geojson", data: bboxGeoJSON });
+      map.addLayer({
+        id: "manifest-bboxes-line",
+        type: "line",
+        source: "manifest-bboxes",
+        layout: { visibility: showBoxes ? "visible" : "none" },
+        paint: { "line-color": "#d33", "line-width": 1.5, "line-opacity": 0.7 },
+      });
+      map.addLayer({
+        id: "manifest-bboxes-label",
+        type: "symbol",
+        source: "manifest-bboxes",
+        layout: {
+          visibility: showBoxes ? "visible" : "none",
+          "text-field": ["get", "id"],
+          "text-size": 11,
+          "text-anchor": "top-left",
+          "text-offset": [0.3, 0.3],
+        },
+        paint: { "text-color": "#d33", "text-halo-color": "#fff", "text-halo-width": 1 },
+      });
+    }
     if (!map.getLayer(watershedLayer.id)) {
       map.addLayer(watershedLayer);
     }
@@ -536,6 +582,20 @@ export const initSlippyMap = async (container, manifestUrl, appState) => {
         });
       }
     }
+  };
+
+  const setShowBoxes = (v) => {
+    showBoxes = v;
+    for (const id of ["manifest-bboxes-line", "manifest-bboxes-label"]) {
+      if (map.getLayer(id))
+        map.setLayoutProperty(id, "visibility", v ? "visible" : "none");
+    }
+  };
+
+  const setShowStreams = (v) => {
+    showStreams = v;
+    watershedLayer.setShowStreams(v);
+    map.triggerRepaint();
   };
 
   // Layers control
@@ -599,6 +659,40 @@ export const initSlippyMap = async (container, manifestUrl, appState) => {
         label.textContent = bm.label;
 
         row.appendChild(radio);
+        row.appendChild(label);
+        panel.appendChild(row);
+      }
+
+      // Overlay toggles
+      const header2 = document.createElement("div");
+      header2.textContent = "Overlays";
+      header2.style.cssText = header.style.cssText + "margin-top:6px;";
+      panel.appendChild(header2);
+
+      const overlays = [
+        { label: "Streams", get: () => showStreams, set: setShowStreams },
+        { label: "HUC04 boxes", get: () => showBoxes, set: setShowBoxes },
+      ];
+      for (const ov of overlays) {
+        const row = document.createElement("label");
+        row.style.cssText =
+          "display:flex;align-items:center;gap:6px;padding:4px 12px;cursor:pointer;";
+        row.addEventListener(
+          "mouseenter",
+          () => (row.style.background = "#f0f0f0"),
+        );
+        row.addEventListener(
+          "mouseleave",
+          () => (row.style.background = "none"),
+        );
+        const box = document.createElement("input");
+        box.type = "checkbox";
+        box.checked = ov.get();
+        box.style.cssText = "margin:0;";
+        box.addEventListener("change", () => ov.set(box.checked));
+        const label = document.createElement("span");
+        label.textContent = ov.label;
+        row.appendChild(box);
         row.appendChild(label);
         panel.appendChild(row);
       }
