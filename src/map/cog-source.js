@@ -11,6 +11,14 @@ export const openCOG = async (url) => {
   return cogCache[url];
 };
 
+// Forget a handle and its image cache so its block cache can be collected.
+export const closeCOG = (url) => {
+  const cog = cogCache[url];
+  if (!cog) return;
+  imageCache.delete(cog);
+  delete cogCache[url];
+};
+
 // Get the full resolution image dimensions and geotransform info
 export const getCOGInfo = async (cog) => {
   const image = await cog.getImage();

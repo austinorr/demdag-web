@@ -4,6 +4,7 @@ import proj4 from "proj4";
 
 import {
   openCOG,
+  closeCOG,
   getCOGInfo,
   getOverviewLevels,
   getCOGImage,
@@ -17,8 +18,8 @@ import { snapToMaxAcc } from "../snap.js";
 const MINZOOM = 6;
 // Discovery value of cells outside the flow graph (DFS counter starts at 1).
 const NODATA = 0;
-// Crude cap on the shared tile cache (entries, not bytes).
-const TILE_CACHE_MAX = 1500;
+// Byte cap on the shared tile cache; cleared wholesale when exceeded.
+const TILE_CACHE_BYTES = 256 * 1024 * 1024;
 
 // Register a CRS definition with proj4, fetching from epsg.io if needed
 const ensureCRS = async (epsg) => {
@@ -154,6 +155,7 @@ export const initSlippyMap = async (container, manifestUrl, appState) => {
   // leaves the view. The record doubles as the layer's render entry.
   const active = new Map(); // id -> ds
   const tileCache = new Map(); // `${id}:${level}:${tc}:${tr}` -> tile
+  let tileCacheBytes = 0;
 
   const createDataset = (entry) => {
     const ds = {
@@ -219,6 +221,10 @@ export const initSlippyMap = async (container, manifestUrl, appState) => {
     ds.grid = null;
     ds.active = false;
     active.delete(ds.id);
+    // Drop the geotiff handles (each keeps its own block cache). Reopening
+    // later costs one small header request.
+    closeCOG(urlFor(ds.id, "fdr_discovery.tif"));
+    closeCOG(urlFor(ds.id, "fdr_finish.tif"));
   };
 
   // Coordinate transforms (full-res pixel space of one dataset)
@@ -314,8 +320,13 @@ export const initSlippyMap = async (container, manifestUrl, appState) => {
       h: y1 - y0,
     };
 
-    if (tileCache.size >= TILE_CACHE_MAX) tileCache.clear();
+    const bytes = tile.w * tile.h * 8;
+    if (tileCacheBytes + bytes > TILE_CACHE_BYTES) {
+      tileCache.clear();
+      tileCacheBytes = 0;
+    }
     tileCache.set(key, tile);
+    tileCacheBytes += bytes;
     return tile;
   };
 
