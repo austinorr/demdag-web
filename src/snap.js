@@ -1,7 +1,17 @@
 // Snap-to-max-accumulation in raster space.
 // Searches a circular neighborhood and returns the pixel with the highest
 // flow accumulation (1 + finish - discovery).
-export const snapToMaxAcc = (col, row, radius, discData, finiData, width, height) => {
+// Cells whose discovery value equals `nodata` (if given) are never chosen.
+export const snapToMaxAcc = (
+  col,
+  row,
+  radius,
+  discData,
+  finiData,
+  width,
+  height,
+  nodata,
+) => {
   if (radius <= 0) return { x: col, y: row };
 
   const snap2 = radius * radius;
@@ -18,6 +28,7 @@ export const snapToMaxAcc = (col, row, radius, discData, finiData, width, height
       const r = Math.min(height - 1, Math.max(0, r0 + j));
       if (i * i + j * j <= snap2) {
         const idx = r * width + c;
+        if (nodata !== undefined && discData[idx] === nodata) continue;
         const acc = 1 + finiData[idx] - discData[idx];
         if (acc > maxAcc) {
           maxAcc = acc;
