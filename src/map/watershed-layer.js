@@ -4,7 +4,9 @@
 // uniforms, because discovery/finish values are only comparable within a pair.
 //
 // Each entry is a plain object owned by slippy-map.js with at least:
-//   { active, tex: { disc, fini }, w, h, grid, dv, fv, cursor: [x, y] }
+//   { active, tex: { disc, fini }, w, h, grid, dv, fv, cursor: [x, y], levelIndex }
+// Streams (log-faded flow accumulation) draw on every loaded entry; the
+// watershed draws only on the active one.
 
 import { compileShader, linkProgram } from "../gl/shader.js";
 
@@ -28,12 +30,23 @@ uniform highp usampler2D u_finish;
 uniform uint u_dv;
 uniform uint u_fv;
 uniform uint u_nodata;
+uniform int u_active;        // 1 = this dataset holds the cursor
+uniform int u_streams;       // 1 = draw streams at this entry's level
+uniform float u_streamScale;   // multiplies ACC_LO/ACC_HI at coarser levels
 uniform ivec2 u_dataSize;
 uniform ivec2 u_cursorTexel;
 uniform float u_opacity;
 
 in vec2 v_texCoord;
 out vec4 fragColor;
+
+// Stream shading: flow accumulation (1 + f - d) mapped log from ACC_LO
+// (transparent) to ACC_HI (full STREAM_COLOR), in full-res cells at level 0
+// and multiplied by u_streamScale at coarser levels (see STREAM_SCALE_BASE).
+const float ACC_LO = 100.0;
+const float ACC_HI = 1.0e5;
+const vec3 STREAM_COLOR = vec3(0.02, 0.18, 0.62);
+const vec3 WATERSHED_COLOR = vec3(0.0, 0.3, 1.0);
 
 void main() {
   if (v_texCoord.x < 0.0 || v_texCoord.x > 1.0 ||
@@ -46,24 +59,47 @@ void main() {
 
   uint d = texelFetch(u_discovery, texel, 0).r;
   if (d == u_nodata) discard;
+  uint f = texelFetch(u_finish, texel, 0).r;
 
   // Selected pixel — shade grey
-  if (texel == u_cursorTexel) {
+  if (u_active == 1 && texel == u_cursorTexel) {
     fragColor = vec4(0.5, 0.5, 0.5, u_opacity);
     return;
   }
 
-  uint f = texelFetch(u_finish, texel, 0).r;
+  // Accumulation. Overviews reduce d and f independently (max), so f < d
+  // can happen there; treat it as no stream rather than wrapping the uint.
+  float acc = f >= d ? float(f - d) + 1.0 : 0.0;
+  float lo = ACC_LO * u_streamScale;
+  float hi = ACC_HI * u_streamScale;
+  float t = u_streams == 1
+    ? clamp(log(acc / lo) / log(hi / lo), 0.0, 1.0)
+    : 0.0;
 
-  // Upstream watershed (blue). f is the max discovery in the subtree, so
-  // descendants on the path to that leaf have f == u_fv: use >= / <=.
-  if (d >= u_dv && f <= u_fv) {
-    fragColor = vec4(0.0, 0.3, 1.0, u_opacity);
+  // Upstream watershed (blue) for the active dataset only. f is the max
+  // discovery in the subtree, so descendants on the path to that leaf have
+  // f == u_fv: use >= / <=.
+  bool inWatershed = u_active == 1 && d >= u_dv && f <= u_fv;
+
+  if (inWatershed) {
+    // streams stay visible inside the watershed as a darker blue
+    fragColor = vec4(mix(WATERSHED_COLOR, STREAM_COLOR, t), u_opacity);
+  } else if (t > 0.0) {
+    fragColor = vec4(STREAM_COLOR, t * u_opacity);
   } else {
     discard;
   }
 }
 `;
+
+// Coarsest overview level at which streams are drawn. Needs paired overviews
+// (per block, the pixel with the largest f - d, both values kept); with
+// independently max-reduced overviews f - d is noise, so set this to 0.
+const STREAM_MAX_LEVEL = Infinity;
+// How the stream fade thresholds grow per overview level: 1 keeps fixed cell
+// counts (a blue wash when zoomed out), 4 tracks texel area (only the biggest
+// rivers survive), 2 tracks texel width and sits between.
+const STREAM_SCALE_BASE = 2;
 
 export const GRID_N = 16;
 const GRID_VERTS = (GRID_N + 1) * (GRID_N + 1); // 289
@@ -71,6 +107,7 @@ const GRID_INDICES = GRID_N * GRID_N * 6; // 1536
 
 export const createWatershedLayer = (id, nodata = 0) => {
   let entries = [];
+  let showStreams = true;
   let map = null;
   let program = null;
   let posBuffer = null;
@@ -146,6 +183,9 @@ export const createWatershedLayer = (id, nodata = 0) => {
         dv: gl.getUniformLocation(program, "u_dv"),
         fv: gl.getUniformLocation(program, "u_fv"),
         nodata: gl.getUniformLocation(program, "u_nodata"),
+        active: gl.getUniformLocation(program, "u_active"),
+        streams: gl.getUniformLocation(program, "u_streams"),
+        streamScale: gl.getUniformLocation(program, "u_streamScale"),
         dataSize: gl.getUniformLocation(program, "u_dataSize"),
         cursorTexel: gl.getUniformLocation(program, "u_cursorTexel"),
         opacity: gl.getUniformLocation(program, "u_opacity"),
@@ -156,7 +196,7 @@ export const createWatershedLayer = (id, nodata = 0) => {
       if (!program || !map) return;
 
       const drawable = entries.filter(
-        (e) => e.active && e.tex.disc && e.tex.fini && e.grid,
+        (e) => e.tex.disc && e.tex.fini && e.grid,
       );
       if (drawable.length === 0) return;
 
@@ -197,6 +237,12 @@ export const createWatershedLayer = (id, nodata = 0) => {
         gl.activeTexture(gl.TEXTURE5);
         gl.bindTexture(gl.TEXTURE_2D, e.tex.fini);
 
+        gl.uniform1i(uniforms.active, e.active ? 1 : 0);
+        gl.uniform1i(
+          uniforms.streams,
+          showStreams && e.levelIndex <= STREAM_MAX_LEVEL ? 1 : 0,
+        );
+        gl.uniform1f(uniforms.streamScale, Math.pow(STREAM_SCALE_BASE, e.levelIndex));
         gl.uniform1ui(uniforms.dv, e.dv);
         gl.uniform1ui(uniforms.fv, e.fv);
         gl.uniform2i(uniforms.dataSize, e.w, e.h);
@@ -214,6 +260,10 @@ export const createWatershedLayer = (id, nodata = 0) => {
 
     setOpacity(v) {
       opacity = v;
+    },
+
+    setShowStreams(v) {
+      showStreams = v;
     },
   };
 
